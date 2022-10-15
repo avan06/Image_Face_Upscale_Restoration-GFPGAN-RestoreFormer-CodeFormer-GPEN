@@ -23,17 +23,17 @@ if not os.path.exists('CodeFormer.pth'):
     os.system("wget https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/CodeFormer.pth -P .")
 
 torch.hub.download_url_to_file(
-    'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Abraham_Lincoln_O-77_matte_collodion_print.jpg/1024px-Abraham_Lincoln_O-77_matte_collodion_print.jpg',
-    'lincoln.jpg')
+    'https://static.toiimg.com/photo/msid-71531342/71531342.jpg',
+    'a1.jpg')
 torch.hub.download_url_to_file(
-    'https://user-images.githubusercontent.com/17445847/187400315-87a90ac9-d231-45d6-b377-38702bd1838f.jpg',
-    'AI-generate.jpg')
+    'https://www.deccanherald.com/sites/dh/files/styles/gallery_thumbnails/public/gallery_images/2021/09/17/PM%20Modi%20Rare%20Photos%20%284%29.jpg',
+    'a2.jpg')
 torch.hub.download_url_to_file(
-    'https://user-images.githubusercontent.com/17445847/187400981-8a58f7a4-ef61-42d9-af80-bc6234cef860.jpg',
-    'Blake_Lively.jpg')
+    'https://resize.indiatvnews.com/en/resize/newbucket/715_-/2018/01/dssd-1514798177.jpg',
+    'a3.jpg')
 torch.hub.download_url_to_file(
-    'https://user-images.githubusercontent.com/17445847/187401133-8a3bf269-5b4d-4432-b2f0-6d26ee1d3307.png',
-    '10045.png')
+    'https://resize.indiatvnews.com/en/resize/newbucket/715_-/2018/01/capture-1514798177.jpg',
+    'a4.jpg')
 
 # background enhancer with RealESRGAN
 model = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4, act_type='prelu')
@@ -75,9 +75,12 @@ def inference(img, version, scale):
         elif version == 'RestoreFormer':
             face_enhancer = GFPGANer(
             model_path='RestoreFormer.pth', upscale=2, arch='RestoreFormer', channel_multiplier=2, bg_upsampler=upsampler)
-        # elif version == 'CodeFormer':
-        #     face_enhancer = GFPGANer(
-        #     model_path='CodeFormer.pth', upscale=2, arch='CodeFormer', channel_multiplier=2, bg_upsampler=upsampler)
+        elif version == 'CodeFormer':
+             face_enhancer = GFPGANer(
+             model_path='CodeFormer.pth', upscale=2, arch='CodeFormer', channel_multiplier=2, bg_upsampler=upsampler)
+        elif version == 'RealESR-General-x4v3':
+             face_enhancer = GFPGANer(
+             model_path='realesr-general-x4v3.pth', upscale=2, arch='realesr-general', channel_multiplier=2, bg_upsampler=upsampler)
 
         try:
             # _, _, output = face_enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True, weight=weight)
@@ -121,7 +124,7 @@ demo = gr.Interface(
     inference, [
         gr.inputs.Image(type="filepath", label="Input"),
         # gr.inputs.Radio(['v1.2', 'v1.3', 'v1.4', 'RestoreFormer', 'CodeFormer'], type="value", default='v1.4', label='version'),
-        gr.inputs.Radio(['v1.2', 'v1.3', 'v1.4', 'RestoreFormer'], type="value", default='v1.4', label='version'),
+        gr.inputs.Radio(['v1.2', 'v1.3', 'v1.4', 'RestoreFormer','CodeFormer','RealESR-General-x4v3'], type="value", default='v1.4', label='version'),
         gr.inputs.Number(label="Rescaling factor", default=2),
         # gr.Slider(0, 100, label='Weight, only for CodeFormer. 0 for better quality, 100 for better identity', default=50)
     ], [
@@ -133,7 +136,7 @@ demo = gr.Interface(
     article=article,
     # examples=[['AI-generate.jpg', 'v1.4', 2, 50], ['lincoln.jpg', 'v1.4', 2, 50], ['Blake_Lively.jpg', 'v1.4', 2, 50],
     #           ['10045.png', 'v1.4', 2, 50]]).launch()
-    examples=[['AI-generate.jpg', 'v1.4', 2], ['lincoln.jpg', 'v1.4', 2], ['Blake_Lively.jpg', 'v1.4', 2],
-              ['10045.png', 'v1.4', 2]])
+    examples=[['a1.jpg', 'v1.4', 2], ['a2.jpg', 'v1.4', 2], ['a3.jpg', 'v1.4', 2],['a4.jpg', 'v1.4', 2]])
+    
 demo.queue(concurrency_count=4)
 demo.launch()
