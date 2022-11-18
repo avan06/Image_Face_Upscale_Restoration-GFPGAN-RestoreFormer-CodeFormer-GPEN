@@ -23,16 +23,16 @@ if not os.path.exists('CodeFormer.pth'):
     os.system("wget https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/CodeFormer.pth -P .")
 
 torch.hub.download_url_to_file(
-    'https://static.toiimg.com/photo/msid-71531342/71531342.jpg',
+    'https://thumbs.dreamstime.com/b/tower-bridge-traditional-red-bus-black-white-colors-view-to-tower-bridge-london-black-white-colors-108478942.jpg',
     'a1.jpg')
 torch.hub.download_url_to_file(
-    'https://www.deccanherald.com/sites/dh/files/styles/gallery_thumbnails/public/gallery_images/2021/09/17/PM%20Modi%20Rare%20Photos%20%284%29.jpg',
+    'https://media.istockphoto.com/id/523514029/photo/london-skyline-b-w.jpg?s=612x612&w=0&k=20&c=kJS1BAtfqYeUDaORupj0sBPc1hpzJhBUUqEFfRnHzZ0=',
     'a2.jpg')
 torch.hub.download_url_to_file(
-    'https://resize.indiatvnews.com/en/resize/newbucket/715_-/2018/01/dssd-1514798177.jpg',
+    'https://i.guim.co.uk/img/media/06f614065ed82ca0e917b149a32493c791619854/0_0_3648_2789/master/3648.jpg?width=700&quality=85&auto=format&fit=max&s=05764b507c18a38590090d987c8b6202',
     'a3.jpg')
 torch.hub.download_url_to_file(
-    'https://resize.indiatvnews.com/en/resize/newbucket/715_-/2018/01/capture-1514798177.jpg',
+    'https://i.pinimg.com/736x/46/96/9e/46969eb94aec2437323464804d27706d--victorian-london-victorian-era.jpg',
     'a4.jpg')
 
 # background enhancer with RealESRGAN
