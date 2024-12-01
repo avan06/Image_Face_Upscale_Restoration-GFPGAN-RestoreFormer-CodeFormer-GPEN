@@ -1,11 +1,19 @@
-torch>=1.7
-basicsr>=1.4.2
-facexlib>=0.2.5
-gfpgan>=1.3.7
-realesrgan>=0.2.5
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+gradio==5.8.0
+
+basicsr @ git+https://github.com/XPixelGroup/BasicSR
+facexlib @ git+https://github.com/avan06/facexlib
+gfpgan @ git+https://github.com/avan06/GFPGAN
+realesrgan @ git+https://github.com/avan06/Real-ESRGAN
 numpy
 opencv-python
-torchvision
+
+torch==2.5.0+cu124; sys_platform != 'darwin'
+torchvision==0.20.0+cu124; sys_platform != 'darwin'
+torch==2.5.0; sys_platform == 'darwin'
+torchvision==0.20.0; sys_platform == 'darwin'
+
 scipy
 tqdm
 lmdb
