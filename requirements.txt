@@ -2,10 +2,11 @@
 
 gradio==5.8.0
 
-basicsr @ git+https://github.com/XPixelGroup/BasicSR
+basicsr @ git+https://github.com/avan06/BasicSR
 facexlib @ git+https://github.com/avan06/facexlib
 gfpgan @ git+https://github.com/avan06/GFPGAN
 realesrgan @ git+https://github.com/avan06/Real-ESRGAN
+
 numpy
 opencv-python
 
@@ -19,3 +20,6 @@ tqdm
 lmdb
 pyyaml
 yapf
+
+image_gen_aux @ git+https://github.com/huggingface/image_gen_aux
+gdown # supports downloading the large file from Google Drive
