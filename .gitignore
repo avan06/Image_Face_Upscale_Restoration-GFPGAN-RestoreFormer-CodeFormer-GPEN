@@ -140,4 +140,5 @@ dmypy.json
 .vs
 output
 weights
-*.jpg
+.jpg
+.png
