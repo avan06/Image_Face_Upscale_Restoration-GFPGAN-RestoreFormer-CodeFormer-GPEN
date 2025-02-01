@@ -63,6 +63,54 @@ upscale_models = {
     "realesr-animevideov3.pth": ["https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
                                 "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.5.0", 
 """update the RealESRGAN AnimeVideo-v3 model, which can achieve better results with a faster inference speed."""],
+    
+    "4xLSDIRCompact.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompact/4xLSDIRCompact.pth",
+                                "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompact", 
+"""Upscale small good quality photos to 4x their size. This is my first ever released self-trained sisr upscaling model."""],
+     
+    "4xLSDIRCompactC.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompactC/4xLSDIRCompactC.pth",
+                                "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompactC", 
+"""4x photo upscaler that handler jpg compression. Trying to extend my previous model to be able to handle compression (JPG 100-30) by manually altering the training dataset, since 4xLSDIRCompact cant handle compression. Use this instead of 4xLSDIRCompact if your photo has compression (like an image from the web)."""],
+         
+    "4xLSDIRCompactR.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompactC/4xLSDIRCompactR.pth",
+                                "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompactC", 
+"""4x photo uspcaler that handles jpg compression, noise and slight. Extending my last 4xLSDIRCompact model to Real-ESRGAN, meaning trained on synthetic data instead to handle more kinds of degradations, it should be able to handle compression, noise, and slight blur."""],
+
+    "4xLSDIRCompactN.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompact3/4xLSDIRCompactC3.pth",
+                                "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompact3", 
+"""Upscale good quality input photos to x4 their size. The original 4xLSDIRCompact a bit more trained, cannot handle degradation.
+I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggestion is, if you have good quality input images use 4xLSDIRCompactN3, otherwise try 4xLSDIRCompactC3 which will be able to handle jpg compression and a bit of blur, or then 4xLSDIRCompactCR3, which is an interpolation between C3 and R3 to be able to handle a bit of noise additionally."""],
+
+    "4xLSDIRCompactC3.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompact3/4xLSDIRCompactC3.pth",
+                                "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompact3", 
+"""Upscale compressed photos to x4 their size. Able to handle JPG compression (30-100).
+I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggestion is, if you have good quality input images use 4xLSDIRCompactN3, otherwise try 4xLSDIRCompactC3 which will be able to handle jpg compression and a bit of blur, or then 4xLSDIRCompactCR3, which is an interpolation between C3 and R3 to be able to handle a bit of noise additionally."""],
+
+    "4xLSDIRCompactR3.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompact3/4xLSDIRCompactR3.pth",
+                                "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompact3", 
+"""Upscale (degraded) photos to x4 their size. Trained on synthetic data, meant to handle more degradations.
+I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggestion is, if you have good quality input images use 4xLSDIRCompactN3, otherwise try 4xLSDIRCompactC3 which will be able to handle jpg compression and a bit of blur, or then 4xLSDIRCompactCR3, which is an interpolation between C3 and R3 to be able to handle a bit of noise additionally."""],
+
+    "4xLSDIRCompactCR3.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompact3/4xLSDIRCompactCR3.pth",
+                                "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompact3", 
+"""I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggestion is, if you have good quality input images use 4xLSDIRCompactN3, otherwise try 4xLSDIRCompactC3 which will be able to handle jpg compression and a bit of blur, or then 4xLSDIRCompactCR3, which is an interpolation between C3 and R3 to be able to handle a bit of noise additionally."""],
+
+    "2xParimgCompact.pth": ["https://github.com/Phhofm/models/releases/download/2xParimgCompact/2xParimgCompact.pth",
+                                "https://github.com/Phhofm/models/releases/tag/2xParimgCompact", 
+"""A 2x photo upscaling compact model based on Microsoft's ImagePairs. This was one of the earliest models I started training and finished it now for release. As can be seen in the examples, this model will affect colors."""],
+
+    "1xExposureCorrection_compact.pth": ["https://github.com/Phhofm/models/releases/download/1xExposureCorrection_compact/1xExposureCorrection_compact.pth",
+                                "https://github.com/Phhofm/models/releases/tag/1xExposureCorrection_compact", 
+"""This model is meant as an experiment to see if compact can be used to train on photos to exposure correct those using the pixel, perceptual, color, color and ldl losses. There is no brightness loss. Still it seems to kinda work."""],
+    
+    "1xUnderExposureCorrection_compact.pth": ["https://github.com/Phhofm/models/releases/download/1xExposureCorrection_compact/1xUnderExposureCorrection_compact.pth",
+                                "https://github.com/Phhofm/models/releases/tag/1xExposureCorrection_compact", 
+"""This model is meant as an experiment to see if compact can be used to train on underexposed images to exposure correct those using the pixel, perceptual, color, color and ldl losses. There is no brightness loss. Still it seems to kinda work."""],
+    
+    "1xOverExposureCorrection_compact.pth": ["https://github.com/Phhofm/models/releases/download/1xExposureCorrection_compact/1xOverExposureCorrection_compact.pth",
+                                "https://github.com/Phhofm/models/releases/tag/1xExposureCorrection_compact", 
+"""This model is meant as an experiment to see if compact can be used to train on overexposed images to exposure correct those using the pixel, perceptual, color, color and ldl losses. There is no brightness loss. Still it seems to kinda work."""],
+
 
     # RRDBNet
     "RealESRGAN_x4plus_anime_6B.pth": ["https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
@@ -218,7 +266,7 @@ def get_model_type(model_name):
     model_type = "other"
     if any(value in model_name.lower() for value in ("realesrgan", "realesrnet")):
         model_type = "RRDB"
-    elif "realesr" in model_name.lower() in model_name.lower():
+    elif any(value in model_name.lower() for value in ("realesr", "exposurecorrection", "parimgcompact", "lsdircompact")):
         model_type = "SRVGG"
     elif "esrgan" in model_name.lower() or "4x-AnimeSharp.pth" == model_name:
         model_type = "ESRGAN"
@@ -240,7 +288,7 @@ typed_upscale_models = {get_model_type(key): value[0] for key, value in upscale_
 
 
 class Upscale:
-    def inference(self, img, face_restoration, upscale_model, scale: float, face_detection, outputWithModelName: bool):
+    def inference(self, img, face_restoration, upscale_model, scale: float, face_detection, face_detection_threshold: any, face_detection_only_center: bool, outputWithModelName: bool):
         print(img)
         print(face_restoration, upscale_model, scale)
         try:
@@ -281,8 +329,8 @@ class Upscale:
                     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=num_block, num_grow_ch=32, scale=netscale)
                 elif upscale_type == "SRVGG":
                     from realesrgan.archs.srvgg_arch import SRVGGNetCompact
-                    netscale = 4
-                    num_conv = 16 if "animevideov3" in upscale_model else 32
+                    netscale = 1 if "1x" in upscale_model else (2 if "2x" in upscale_model else 4)
+                    num_conv = 16 if any(value in upscale_model for value in ("animevideov3", "ExposureCorrection", "ParimgCompact", "LSDIRCompact")) else 32
                     model = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=num_conv, upscale=netscale, act_type='prelu')
                 elif upscale_type == "ESRGAN":
                     netscale = 4
@@ -479,7 +527,7 @@ class Upscale:
                     bg_upsample_img, _ = auto_split_upscale(img, self.upsampler.enhance, self.scale) if is_auto_split_upscale else self.upsampler.enhance(img, outscale=self.scale)
                     
                 if self.face_enhancer:
-                    cropped_faces, restored_aligned, bg_upsample_img = self.face_enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True, bg_upsample_img=bg_upsample_img)
+                    cropped_faces, restored_aligned, bg_upsample_img = self.face_enhancer.enhance(img, has_aligned=False, only_center_face=face_detection_only_center, paste_back=True, bg_upsample_img=bg_upsample_img, eye_dist_threshold=face_detection_threshold)
                     # save faces
                     if cropped_faces and restored_aligned:
                         for idx, (cropped_face, restored_face) in enumerate(zip(cropped_faces, restored_aligned)):
@@ -635,13 +683,15 @@ def main():
     with gr.Blocks(title = title) as demo:
         gr.Markdown(value=f"<h1 style=\"text-align:center;\">{title}</h1><br>{description}")
         with gr.Row():
-            with gr.Column(variant="panel"):
-                input_image = gr.Image(type="filepath", label="Input", format="png")
-                face_model = gr.Dropdown(list(face_models.keys())+[None], type="value", value='GFPGANv1.4.pth', label='Face Restoration version', info="Face Restoration and RealESR can be freely combined in different ways, or one can be set to \"None\" to use only the other model. Face Restoration is primarily used for face restoration in real-life images, while RealESR serves as a background restoration model.")
-                upscale_model = gr.Dropdown(list(typed_upscale_models.keys())+[None], type="value", value='SRVGG, realesr-general-x4v3.pth', label='UpScale version')
-                upscale_scale = gr.Number(label="Rescaling factor", value=4)
-                face_detection = gr.Dropdown(["retinaface_resnet50", "YOLOv5l", "YOLOv5n"], type="value", value="retinaface_resnet50", label="Face Detection type")
-                with_model_name = gr.Checkbox(label="Output image files name with model name", value=True)
+            with gr.Column(variant         ="panel"):
+                input_image                = gr.Image(type="filepath", label="Input", format="png")
+                face_model                 = gr.Dropdown(list(face_models.keys())+[None], type="value", value='GFPGANv1.4.pth', label='Face Restoration version', info="Face Restoration and RealESR can be freely combined in different ways, or one can be set to \"None\" to use only the other model. Face Restoration is primarily used for face restoration in real-life images, while RealESR serves as a background restoration model.")
+                upscale_model              = gr.Dropdown(list(typed_upscale_models.keys())+[None], type="value", value='SRVGG, realesr-general-x4v3.pth', label='UpScale version')
+                upscale_scale              = gr.Number(label="Rescaling factor", value=4)
+                face_detection             = gr.Dropdown(["retinaface_resnet50", "YOLOv5l", "YOLOv5n"], type="value", value="retinaface_resnet50", label="Face Detection type")
+                face_detection_threshold   = gr.Number(label="Face eye dist threshold", value=10, info="A threshold to filter out faces with too small an eye distance (e.g., side faces).")
+                face_detection_only_center = gr.Checkbox(value=False, label="Face detection only center", info="If set to True, only the face closest to the center of the image will be kept.")
+                with_model_name  = gr.Checkbox(label="Output image files name with model name", value=True)
                 with gr.Row():
                     submit = gr.Button(value="Submit", variant="primary", size="lg")
                     clear = gr.ClearButton(
@@ -651,6 +701,8 @@ def main():
                             upscale_model,
                             upscale_scale,
                             face_detection,
+                            face_detection_threshold,
+                            face_detection_only_center,
                             with_model_name,
                         ], variant="secondary", size="lg",)
             with gr.Column(variant="panel"):
@@ -689,6 +741,8 @@ def main():
                 upscale_model,
                 upscale_scale,
                 face_detection,
+                face_detection_threshold,
+                face_detection_only_center,
                 with_model_name,
             ],
             outputs=[gallerys, outputs],
