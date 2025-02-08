@@ -1,12 +1,14 @@
 ﻿import os
 import gc
+import re
 import cv2
 import numpy as np
 import gradio as gr
 import torch
 import traceback
+from collections import defaultdict
 from facexlib.utils.misc import download_from_url
-from realesrgan.utils import RealESRGANer
+from basicsr.utils.realesrganer import RealESRGANer
 
 
 # Define URLs and their corresponding local storage paths
@@ -111,7 +113,6 @@ I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggest
                                 "https://github.com/Phhofm/models/releases/tag/1xExposureCorrection_compact", 
 """This model is meant as an experiment to see if compact can be used to train on overexposed images to exposure correct those using the pixel, perceptual, color, color and ldl losses. There is no brightness loss. Still it seems to kinda work."""],
 
-
     # RRDBNet
     "RealESRGAN_x4plus_anime_6B.pth": ["https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
                                       "https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.2.2.4", 
@@ -139,6 +140,31 @@ I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggest
 """Purpose: Illustrations, digital art, manga covers
 Model for color images including manga covers and color illustrations, digital art, visual novel art, artbooks, and more. 
 DAT2 version is the highest quality version but also the slowest. See the ESRGAN version for faster performance."""],
+
+    "2x-sudo-RealESRGAN.pth": ["https://objectstorage.us-phoenix-1.oraclecloud.com/n/ax6ygfvpvzka/b/open-modeldb-files/o/2x-sudo-RealESRGAN.pth",
+                               "https://openmodeldb.info/models/2x-sudo-RealESRGAN", 
+"""Pretrained: Pretrained_Model_G: RealESRGAN_x4plus_anime_6B.pth / RealESRGAN_x4plus_anime_6B.pth (sudo_RealESRGAN2x_3.332.758_G.pth)
+Tried to make the best 2x model there is for drawings. I think i archived that. 
+And yes, it is nearly 3.8 million iterations (probably a record nobody will beat here), took me nearly half a year to train. 
+It can happen that in one edge is a noisy pattern in edges. You can use padding/crop for that. 
+I aimed for perceptual quality without zooming in like 400%. Since RealESRGAN is 4x, I downscaled these images with bicubic."""],
+    
+    "2x-sudo-RealESRGAN-Dropout.pth": ["https://objectstorage.us-phoenix-1.oraclecloud.com/n/ax6ygfvpvzka/b/open-modeldb-files/o/2x-sudo-RealESRGAN-Dropout.pth",
+                               "https://openmodeldb.info/models/2x-sudo-RealESRGAN-Dropout", 
+"""Pretrained: Pretrained_Model_G: RealESRGAN_x4plus_anime_6B.pth / RealESRGAN_x4plus_anime_6B.pth (sudo_RealESRGAN2x_3.332.758_G.pth)
+Tried to make the best 2x model there is for drawings. I think i archived that. 
+And yes, it is nearly 3.8 million iterations (probably a record nobody will beat here), took me nearly half a year to train. 
+It can happen that in one edge is a noisy pattern in edges. You can use padding/crop for that. 
+I aimed for perceptual quality without zooming in like 400%. Since RealESRGAN is 4x, I downscaled these images with bicubic."""],
+
+    "4xNomos2_otf_esrgan.pth": ["https://github.com/Phhofm/models/releases/download/4xNomos2_otf_esrgan/4xNomos2_otf_esrgan.pth",
+                               "https://github.com/Phhofm/models/releases/tag/4xNomos2_otf_esrgan", 
+"""Purpose: Restoration, 4x ESRGAN model for photography, trained using the Real-ESRGAN otf degradation pipeline."""],
+
+    "4xNomosWebPhoto_esrgan.pth": ["https://github.com/Phhofm/models/releases/download/4xNomosWebPhoto_esrgan/4xNomosWebPhoto_esrgan.pth",
+                               "https://github.com/Phhofm/models/releases/tag/4xNomosWebPhoto_esrgan", 
+"""Purpose: Restoration, 4x ESRGAN model for photography, trained with realistic noise, lens blur, jpg and webp re-compression.
+ESRGAN version of 4xNomosWebPhoto_RealPLKSR, trained on the same dataset and in the same way."""],
 
     # DATNet
     "4xNomos8kDAT.pth"                     : ["https://github.com/Phhofm/models/releases/download/4xNomos8kDAT/4xNomos8kDAT.pth",
@@ -264,11 +290,13 @@ example_list = ["images/a01.jpg", "images/a02.jpg", "images/a03.jpg", "images/a0
 def get_model_type(model_name):
     # Define model type mappings based on key parts of the model names
     model_type = "other"
-    if any(value in model_name.lower() for value in ("realesrgan", "realesrnet")):
+    if any(value in model_name.lower() for value in ("4x-animesharp.pth", "sudo-realesrgan")):
+        model_type = "ESRGAN"
+    elif any(value in model_name.lower() for value in ("realesrgan", "realesrnet")):
         model_type = "RRDB"
     elif any(value in model_name.lower() for value in ("realesr", "exposurecorrection", "parimgcompact", "lsdircompact")):
         model_type = "SRVGG"
-    elif "esrgan" in model_name.lower() or "4x-AnimeSharp.pth" == model_name:
+    elif "esrgan" in model_name.lower():
         model_type = "ESRGAN"
     elif "dat" in model_name.lower():
         model_type = "DAT"
@@ -296,13 +324,13 @@ class Upscale:
             self.img_name = os.path.basename(str(img))
             self.basename, self.extension = os.path.splitext(self.img_name)
             
-            img = cv2.imdecode(np.fromfile(img, np.uint8), cv2.IMREAD_UNCHANGED) # cv2.imread(img, cv2.IMREAD_UNCHANGED)
+            img = cv2.imdecode(np.fromfile(img, np.uint8), cv2.IMREAD_UNCHANGED)
             
             self.img_mode = "RGBA" if len(img.shape) == 3 and img.shape[2] == 4 else None
             if len(img.shape) == 2:  # for gray inputs
                 img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-            h, w = img.shape[0:2]
+            self.h_input, self.w_input = img.shape[0:2]
 
             if face_restoration:
                 download_from_url(face_models[face_restoration][0], face_restoration, os.path.join("weights", "face"))
@@ -314,48 +342,45 @@ class Upscale:
                 download_from_url(upscale_models[upscale_model][0], upscale_model, os.path.join("weights", "upscale"))
                 modelInUse = f"_{os.path.splitext(upscale_model)[0]}"
             
-            netscale = 4
+            self.netscale = 1 if any(sub in upscale_model for sub in ("x1", "1x")) else (2 if any(sub in upscale_model for sub in ("x2", "2x")) else 4)
             loadnet = None
             model = None
             is_auto_split_upscale = True
             half = True if torch.cuda.is_available() else False
             if upscale_type:
                 from basicsr.archs.rrdbnet_arch import RRDBNet
-                from basicsr.archs.realplksr_arch import realplksr
                 # background enhancer with upscale model
-                if upscale_type == "RRDB":
-                    netscale = 2 if "x2" in upscale_model else 4
-                    num_block = 6 if "6B" in upscale_model else 23
-                    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=num_block, num_grow_ch=32, scale=netscale)
-                elif upscale_type == "SRVGG":
-                    from realesrgan.archs.srvgg_arch import SRVGGNetCompact
-                    netscale = 1 if "1x" in upscale_model else (2 if "2x" in upscale_model else 4)
-                    num_conv = 16 if any(value in upscale_model for value in ("animevideov3", "ExposureCorrection", "ParimgCompact", "LSDIRCompact")) else 32
-                    model = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=num_conv, upscale=netscale, act_type='prelu')
-                elif upscale_type == "ESRGAN":
-                    netscale = 4
-                    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=netscale)
-                    loadnet = {}
+                if any(value == upscale_type for value in ("SRVGG", "RRDB", "ESRGAN")):
                     loadnet_origin = torch.load(os.path.join("weights", "upscale", upscale_model), map_location=torch.device('cpu'), weights_only=True)
-                    for key, value in loadnet_origin.items():
-                        new_key = key.replace("model.0", "conv_first").replace("model.1.sub.23.", "conv_body.").replace("model.1.sub", "body") \
-                            .replace(".0.weight", ".weight").replace(".0.bias", ".bias").replace(".RDB1.", ".rdb1.").replace(".RDB2.", ".rdb2.").replace(".RDB3.", ".rdb3.") \
-                            .replace("model.3.", "conv_up1.").replace("model.6.", "conv_up2.").replace("model.8.", "conv_hr.").replace("model.10.", "conv_last.")
-                        loadnet[new_key] = value
+                    if 'params_ema' in loadnet_origin or 'params' in loadnet_origin:
+                        loadnet_origin = loadnet_origin['params_ema'] if 'params_ema' in loadnet_origin else loadnet_origin['params']
+                if upscale_type == "SRVGG":
+                    from basicsr.archs.srvgg_arch import SRVGGNetCompact
+                    body_max_num = self.find_max_numbers(loadnet_origin, "body")
+                    num_feat = loadnet_origin["body.0.weight"].shape[0]
+                    num_in_ch = loadnet_origin["body.0.weight"].shape[1]
+                    num_conv = body_max_num // 2 - 1 #16 if any(value in upscale_model for value in ("animevideov3", "ExposureCorrection", "ParimgCompact", "LSDIRCompact")) else 32
+                    model = SRVGGNetCompact(num_in_ch=num_in_ch, num_out_ch=3, num_feat=num_feat, num_conv=num_conv, upscale=self.netscale, act_type='prelu')
+                elif upscale_type == "RRDB" or upscale_type == "ESRGAN":
+                    if upscale_type == "RRDB":
+                        num_block = 1 + self.find_max_numbers(loadnet_origin, "body")
+                        num_feat = loadnet_origin["conv_first.weight"].shape[0]
+                    else:
+                        num_block = self.find_max_numbers(loadnet_origin, "model.1.sub")
+                        num_feat = loadnet_origin["model.0.weight"].shape[0]
+                    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=num_feat, num_block=num_block, num_grow_ch=32, scale=self.netscale, is_real_esrgan=upscale_type == "RRDB")
                 elif upscale_type == "DAT":
                     from basicsr.archs.dat_arch import DAT
                     half = False
-                    netscale = 4
                     expansion_factor = 2. if "dat2" in upscale_model.lower() else 4.
-                    model = DAT(img_size=64, in_chans=3, embed_dim=180, split_size=[8,32], depth=[6,6,6,6,6,6], num_heads=[6,6,6,6,6,6], expansion_factor=expansion_factor, upscale=netscale)
+                    model = DAT(img_size=64, in_chans=3, embed_dim=180, split_size=[8,32], depth=[6,6,6,6,6,6], num_heads=[6,6,6,6,6,6], expansion_factor=expansion_factor, upscale=self.netscale)
                     # # Speculate on the parameters.
                     # loadnet_origin = torch.load(os.path.join("weights", "upscale", upscale_model), map_location=torch.device('cpu'), weights_only=True)
-                    # inferred_params = self.infer_parameters_from_state_dict_for_dat(loadnet_origin, netscale)
+                    # inferred_params = self.infer_parameters_from_state_dict_for_dat(loadnet_origin, self.netscale)
                     # for param, value in inferred_params.items():
                     #     print(f"{param}: {value}")
                 elif upscale_type == "HAT":
                     half = False
-                    netscale = 4
                     import torch.nn.functional as F
                     from basicsr.archs.hat_arch import HAT
                     class HATWithAutoPadding(HAT):
@@ -422,21 +447,20 @@ class Upscale:
                         mlp_ratio = 2
                         upsampler = "pixelshuffle"
                     model = HATWithAutoPadding(img_size=64, patch_size=1, in_chans=3, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, compress_ratio=compress_ratio,
-                                squeeze_factor=squeeze_factor, conv_scale=0.01, overlap_ratio=0.5, mlp_ratio=mlp_ratio, upsampler=upsampler, upscale=netscale,)
-                elif upscale_type == "RealPLKSR_dysample":
-                    netscale = 4
-                    model = realplksr(dim=64, n_blocks=28, kernel_size=17, split_ratio=0.25, upscaling_factor=netscale, dysample=True)
-                elif upscale_type == "RealPLKSR":
-                    half = False if "RealPLSKR" in upscale_model else half
-                    netscale = 2 if upscale_model.startswith("2x") else 4
-                    model = realplksr(dim=64, n_blocks=28, kernel_size=17, split_ratio=0.25, upscaling_factor=netscale)
+                                squeeze_factor=squeeze_factor, conv_scale=0.01, overlap_ratio=0.5, mlp_ratio=mlp_ratio, upsampler=upsampler, upscale=self.netscale,)
+                elif "RealPLKSR" in upscale_type:
+                    from basicsr.archs.realplksr_arch import realplksr
+                    if upscale_type == "RealPLKSR_dysample":
+                        model = realplksr(dim=64, n_blocks=28, kernel_size=17, split_ratio=0.25, upscaling_factor=self.netscale, dysample=True)
+                    elif upscale_type == "RealPLKSR":
+                        half = False if "RealPLSKR" in upscale_model else half
+                        model = realplksr(dim=64, n_blocks=28, kernel_size=17, split_ratio=0.25, upscaling_factor=self.netscale)
 
-            
             self.upsampler = None
             if loadnet:
-                self.upsampler = RealESRGANer(scale=netscale, loadnet=loadnet, model=model, tile=0, tile_pad=10, pre_pad=0, half=half)
+                self.upsampler = RealESRGANer(scale=self.netscale, loadnet=loadnet, model=model, tile=0, tile_pad=10, pre_pad=0, half=half)
             elif model:
-                self.upsampler = RealESRGANer(scale=netscale, model_path=os.path.join("weights", "upscale", upscale_model), model=model, tile=0, tile_pad=10, pre_pad=0, half=half)
+                self.upsampler = RealESRGANer(scale=self.netscale, model_path=os.path.join("weights", "upscale", upscale_model), model=model, tile=0, tile_pad=10, pre_pad=0, half=half)
             elif upscale_model:
                 self.upsampler = None
                 import PIL
@@ -475,7 +499,7 @@ class Upscale:
                         pil_img = self.cv2pil(img)
                         pil_img = self.__call__(pil_img)
                         cv_image = self.pil2cv(pil_img)
-                        if outscale is not None and outscale != float(netscale):
+                        if outscale is not None and outscale != float(self.netscale):
                             cv_image = cv2.resize(
                                 cv_image, (
                                     int(w_input * outscale),
@@ -514,7 +538,7 @@ class Upscale:
                         arch = "GPEN-2048"
                         resolution = 2048
 
-                self.face_enhancer = GFPGANer(model_path=model_path, upscale=self.scale, arch=arch, channel_multiplier=channel_multiplier, bg_upsampler=self.upsampler, model_rootpath=model_rootpath, det_model=face_detection, resolution=resolution)
+                self.face_enhancer = GFPGANer(model_path=model_path, upscale=self.scale, arch=arch, channel_multiplier=channel_multiplier, model_rootpath=model_rootpath, det_model=face_detection, resolution=resolution)
 
             files = []
             if not outputWithModelName:
@@ -522,10 +546,10 @@ class Upscale:
 
             try:
                 bg_upsample_img = None
-                if self.upsampler and self.upsampler.enhance:
+                if self.upsampler and hasattr(self.upsampler, "enhance"):
                     from utils.dataops import auto_split_upscale
                     bg_upsample_img, _ = auto_split_upscale(img, self.upsampler.enhance, self.scale) if is_auto_split_upscale else self.upsampler.enhance(img, outscale=self.scale)
-                    
+
                 if self.face_enhancer:
                     cropped_faces, restored_aligned, bg_upsample_img = self.face_enhancer.enhance(img, has_aligned=False, only_center_face=face_detection_only_center, paste_back=True, bg_upsample_img=bg_upsample_img, eye_dist_threshold=face_detection_threshold)
                     # save faces
@@ -571,6 +595,19 @@ class Upscale:
             print("global exception", error)
             return None, None
 
+    def find_max_numbers(self, state_dict, findkeys):
+        if isinstance(findkeys, str):
+            findkeys = [findkeys]
+        max_values = defaultdict(lambda: None)
+        patterns = {findkey: re.compile(rf"^{re.escape(findkey)}\.(\d+)\.") for findkey in findkeys}
+    
+        for key in state_dict:
+            for findkey, pattern in patterns.items():
+                if match := pattern.match(key):  
+                    num = int(match.group(1))
+                    max_values[findkey] = max(num, max_values[findkey] if max_values[findkey] is not None else num)
+
+        return tuple(max_values[findkey] for findkey in findkeys) if len(findkeys) > 1 else max_values[findkeys[0]]
 
     def infer_parameters_from_state_dict_for_dat(self, state_dict, upscale=4):
         if "params" in state_dict:
@@ -659,6 +696,10 @@ class Upscale:
 def main():
     if torch.cuda.is_available():
         torch.cuda.set_per_process_memory_fraction(0.975, device='cuda:0')
+        # set torch options to avoid get black image for RTX16xx card
+        # https://github.com/CompVis/stable-diffusion/issues/69#issuecomment-1260722801
+        torch.backends.cudnn.enabled = True
+        torch.backends.cudnn.benchmark = True
     # Ensure the target directory exists
     os.makedirs('output', exist_ok=True)
 

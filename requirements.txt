@@ -1,11 +1,10 @@
 --extra-index-url https://download.pytorch.org/whl/cu124
 
-gradio==5.14.0
+gradio==5.15.0
 
 basicsr @ git+https://github.com/avan06/BasicSR
 facexlib @ git+https://github.com/avan06/facexlib
 gfpgan @ git+https://github.com/avan06/GFPGAN
-realesrgan @ git+https://github.com/avan06/Real-ESRGAN
 
 numpy
 opencv-python
