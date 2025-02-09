@@ -304,7 +304,7 @@ def get_model_type(model_name):
         model_type = "HAT"
     elif ("realplksr" in model_name.lower() and "dysample" in model_name.lower()) or "rplksrd" in model_name.lower():
         model_type = "RealPLKSR_dysample"
-    elif "realplksr" in model_name.lower() or "rplksr" in model_name.lower():
+    elif any(value in model_name.lower() for value in ("realplksr", "rplksr", "realplskr")):
         model_type = "RealPLKSR"
     elif "drct-l" in model_name.lower():
         model_type = "DRCT-L"
@@ -720,6 +720,23 @@ def main():
     """
 
     upscale = Upscale()
+    
+    rows = []
+    tmptype = None
+    upscale_model_tables = []
+    for key, _ in typed_upscale_models.items():
+        upscale_type, upscale_model = key.split(", ", 1)
+        if tmptype and tmptype != upscale_type:#RRDB ESRGAN
+            speed = "Fast" if tmptype == "SRVGG" else ("Slow" if any(value == tmptype for value in ("DAT", "HAT")) else "Normal")
+            upscale_model_header = f"| Upscale Model | Info, Type: {tmptype}, Model execution speed: {speed} | Download URL |\n|------------|------|--------------|"
+            upscale_model_tables.append(upscale_model_header + "\n" + "\n".join(rows))
+            rows.clear()
+        tmptype = upscale_type
+        value = upscale_models[upscale_model]
+        row = f"| [{upscale_model}]({value[1]}) | " + value[2].replace("\n", "<br>") + " | [download]({value[0]}) |"
+        rows.append(row)
+    upscale_model_header = f"| Upscale Model Name | Info, Type: {tmptype}, Model execution speed: {speed} | Download URL |\n|------------|------|--------------|"
+    upscale_model_tables.append(upscale_model_header + "\n" + "\n".join(rows))
 
     with gr.Blocks(title = title) as demo:
         gr.Markdown(value=f"<h1 style=\"text-align:center;\">{title}</h1><br>{description}")
@@ -764,15 +781,10 @@ def main():
             ]
             markdown_table = header + "\n" + "\n".join(rows)
             gr.Markdown(value=markdown_table)
-        with gr.Row(variant="panel"):
-            # Convert to Markdown table
-            header = "| Upscale Model Name | Info | Download URL |\n|------------|------|--------------|"
-            rows = [
-                f"| [{key}]({value[1]}) | " + value[2].replace("\n", "<br>") + f" | [download]({value[0]}) |"
-                for key, value in upscale_models.items()
-            ]
-            markdown_table = header + "\n" + "\n".join(rows)
-            gr.Markdown(value=markdown_table)
+
+        for table in upscale_model_tables:
+            with gr.Row(variant="panel"):
+                gr.Markdown(value=table)
 
         submit.click(
             upscale.inference, 
