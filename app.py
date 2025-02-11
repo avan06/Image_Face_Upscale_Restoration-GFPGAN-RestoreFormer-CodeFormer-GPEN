@@ -324,7 +324,7 @@ class Upscale:
             self.img_name = os.path.basename(str(img))
             self.basename, self.extension = os.path.splitext(self.img_name)
             
-            img = cv2.imdecode(np.fromfile(img, np.uint8), cv2.IMREAD_UNCHANGED)
+            img = cv2.imdecode(np.fromfile(img, np.uint8), cv2.IMREAD_UNCHANGED) # numpy.ndarray
             
             self.img_mode = "RGBA" if len(img.shape) == 3 and img.shape[2] == 4 else None
             if len(img.shape) == 2:  # for gray inputs
@@ -381,51 +381,7 @@ class Upscale:
                     #     print(f"{param}: {value}")
                 elif upscale_type == "HAT":
                     half = False
-                    import torch.nn.functional as F
                     from basicsr.archs.hat_arch import HAT
-                    class HATWithAutoPadding(HAT):
-                        def pad_to_multiple(self, img, multiple):
-                            """
-                            Fill the image to multiples of both width and height as integers.
-                            """
-                            _, _, h, w = img.shape
-                            pad_h = (multiple - h % multiple) % multiple
-                            pad_w = (multiple - w % multiple) % multiple
-
-                            # Padding on the top, bottom, left, and right.
-                            pad_top = pad_h // 2
-                            pad_bottom = pad_h - pad_top
-                            pad_left = pad_w // 2
-                            pad_right = pad_w - pad_left
-
-                            img_padded = F.pad(img, (pad_left, pad_right, pad_top, pad_bottom), mode="reflect")
-                            return img_padded, (pad_top, pad_bottom, pad_left, pad_right)
-
-                        def remove_padding(self, img, pad_info):
-                            """
-                            Remove padding and restore to the original size, considering upscaling.
-                            """
-                            pad_top, pad_bottom, pad_left, pad_right = pad_info
-
-                            # Adjust padding based on upscaling factor
-                            pad_top = int(pad_top * self.upscale)
-                            pad_bottom = int(pad_bottom * self.upscale)
-                            pad_left = int(pad_left * self.upscale)
-                            pad_right = int(pad_right * self.upscale)
-
-                            return img[:, :, pad_top:-pad_bottom if pad_bottom > 0 else None, pad_left:-pad_right if pad_right > 0 else None]
-
-                        def forward(self, x):
-                            # Step 1: Auto padding
-                            x_padded, pad_info = self.pad_to_multiple(x, self.window_size)
-
-                            # Step 2: Normal model processing
-                            x_processed = super().forward(x_padded)
-
-                            # Step 3: Remove padding
-                            x_cropped = self.remove_padding(x_processed, pad_info)
-                            return x_cropped
-
                     # The parameters are derived from the XPixelGroup project files: HAT-L_SRx4_ImageNet-pretrain.yml and HAT-S_SRx4.yml.
                     # https://github.com/XPixelGroup/HAT/tree/main/options/test
                     if "hat-l" in upscale_model.lower():
@@ -446,7 +402,7 @@ class Upscale:
                         num_heads = [6, 6, 6, 6, 6, 6]
                         mlp_ratio = 2
                         upsampler = "pixelshuffle"
-                    model = HATWithAutoPadding(img_size=64, patch_size=1, in_chans=3, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, compress_ratio=compress_ratio,
+                    model = HAT(img_size=64, patch_size=1, in_chans=3, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, compress_ratio=compress_ratio,
                                 squeeze_factor=squeeze_factor, conv_scale=0.01, overlap_ratio=0.5, mlp_ratio=mlp_ratio, upsampler=upsampler, upscale=self.netscale,)
                 elif "RealPLKSR" in upscale_type:
                     from basicsr.archs.realplksr_arch import realplksr
@@ -493,18 +449,19 @@ class Upscale:
                             new_image = cv2.cvtColor(new_image, cv2.COLOR_RGBA2BGRA)
                         return new_image
 
-                    def enhance(self, img, outscale=None):
+                    def enhance(self_, img, outscale=None):
                         # img: numpy
                         h_input, w_input = img.shape[0:2]
                         pil_img = self.cv2pil(img)
-                        pil_img = self.__call__(pil_img)
+                        pil_img = self_.__call__(pil_img)
                         cv_image = self.pil2cv(pil_img)
                         if outscale is not None and outscale != float(self.netscale):
+                            interpolation = cv2.INTER_AREA if outscale < float(self.netscale) else cv2.INTER_LANCZOS4
                             cv_image = cv2.resize(
                                 cv_image, (
                                     int(w_input * outscale),
                                     int(h_input * outscale),
-                                ), interpolation=cv2.INTER_LANCZOS4)
+                                ), interpolation=interpolation)
                         return cv_image, None
 
                 device = "cuda" if torch.cuda.is_available() else "cpu"
