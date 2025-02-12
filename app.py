@@ -281,6 +281,12 @@ Optimized primarily for PAL resolution (NTSC might work good as well)."""],
                                          "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_atd",
 """An atd 4x upscaling model, similiar to the 4xNomos2_hq_dat2 or 4xNomos2_hq_mosr models, trained and for usage on non-degraded input to give good quality output.
 """],
+
+    # MoSR
+    "4xNomos2_hq_mosr.pth"             : ["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_mosr/4xNomos2_hq_mosr.pth", 
+                                         "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_mosr",
+"""A 4x MoSR upscaling model, meant for non-degraded input, since this model was trained on non-degraded input to give good quality output.
+"""],
 }
 
 example_list = ["images/a01.jpg", "images/a02.jpg", "images/a03.jpg", "images/a04.jpg", "images/bus.jpg", "images/zidane.jpg", 
@@ -312,6 +318,8 @@ def get_model_type(model_name):
         model_type = "DRCT"
     elif "atd" in model_name.lower():
         model_type = "ATD"
+    elif "mosr" in model_name.lower():
+        model_type = "MoSR"
     return f"{model_type}, {model_name}"
 
 typed_upscale_models = {get_model_type(key): value[0] for key, value in upscale_models.items()}
@@ -448,6 +456,19 @@ class Upscale:
                                 mlp_ratio=mlp_ratio,
                                 upsampler=upsampler,
                                 use_checkpoint=False,
+                                )
+                elif upscale_type == "MoSR":
+                    from basicsr.archs.mosr_arch import mosr
+                    model = mosr(in_ch = 3,
+                                out_ch = 3,
+                                upscale = self.netscale,
+                                n_block = 24,
+                                dim = 64,
+                                upsampler = "ps",  # "ps" "ds"
+                                drop_path = 0.0,
+                                kernel_size = 7,
+                                expansion_ratio = 1.5,
+                                conv_ratio = 1.0
                                 )
 
             self.upsampler = None
@@ -720,7 +741,7 @@ def main():
     for key, _ in typed_upscale_models.items():
         upscale_type, upscale_model = key.split(", ", 1)
         if tmptype and tmptype != upscale_type:#RRDB ESRGAN
-            speed = "Fast" if tmptype == "SRVGG" else ("Slow" if any(value == tmptype for value in ("DAT", "HAT", "DRCT")) else "Normal")
+            speed = "Fast" if tmptype == "SRVGG" else ("Slow" if any(value == tmptype for value in ("DAT", "HAT", "DRCT", "ATD")) else "Normal")
             upscale_model_header = f"| Upscale Model | Info, Type: {tmptype}, Model execution speed: {speed} | Download URL |\n|------------|------|--------------|"
             upscale_model_tables.append(upscale_model_header + "\n" + "\n".join(rows))
             rows.clear()
@@ -728,6 +749,7 @@ def main():
         value = upscale_models[upscale_model]
         row = f"| [{upscale_model}]({value[1]}) | " + value[2].replace("\n", "<br>") + " | [download]({value[0]}) |"
         rows.append(row)
+    speed = "Fast" if tmptype == "SRVGG" else ("Slow" if any(value == tmptype for value in ("DAT", "HAT", "DRCT", "ATD")) else "Normal")
     upscale_model_header = f"| Upscale Model Name | Info, Type: {tmptype}, Model execution speed: {speed} | Download URL |\n|------------|------|--------------|"
     upscale_model_tables.append(upscale_model_header + "\n" + "\n".join(rows))
 
