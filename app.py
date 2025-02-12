@@ -270,15 +270,17 @@ Optimized primarily for PAL resolution (NTSC might work good as well)."""],
                                         "https://openmodeldb.info/models/4x-NomosWebPhoto-RealPLKSR", 
 """4x RealPLKSR model for photography, trained with realistic noise, lens blur, jpg and webp re-compression."""],
 
+    # DRCT
     "4xNomos2_hq_drct-l.pth"          : ["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_drct-l/4xNomos2_hq_drct-l.pth", 
                                         "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_drct-l",
 """An drct-l 4x upscaling model, similiar to the 4xNomos2_hq_atd, 4xNomos2_hq_dat2 and 4xNomos2_hq_mosr models, trained and for usage on non-degraded input to give good quality output.
 """],
 
-#     "4xNomos2_hq_atd.pth"             : ["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_atd/4xNomos2_hq_atd.pth", 
-#                                          "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_atd",
-# """An atd 4x upscaling model, similiar to the 4xNomos2_hq_dat2 or 4xNomos2_hq_mosr models, trained and for usage on non-degraded input to give good quality output.
-# """]
+    # ATD
+    "4xNomos2_hq_atd.pth"             : ["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_atd/4xNomos2_hq_atd.pth", 
+                                         "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_atd",
+"""An atd 4x upscaling model, similiar to the 4xNomos2_hq_dat2 or 4xNomos2_hq_mosr models, trained and for usage on non-degraded input to give good quality output.
+"""],
 }
 
 example_list = ["images/a01.jpg", "images/a02.jpg", "images/a03.jpg", "images/a04.jpg", "images/bus.jpg", "images/zidane.jpg", 
@@ -425,6 +427,28 @@ class Upscale:
                         conv_scale= 0.01, overlap_ratio= 0.5, img_range= 1., depths=depths,
                         embed_dim=embed_dim, num_heads=num_heads, gc= 32,
                         mlp_ratio=mlp_ratio, upsampler=upsampler, resi_connection= '1conv')
+                elif upscale_type == "ATD":
+                    half = False
+                    from basicsr.archs.atd_arch import ATD
+                    window_size = 16
+                    depths=[6, 6, 6, 6, 6, 6,]
+                    embed_dim=210
+                    num_heads=[6, 6, 6, 6, 6, 6,]
+                    mlp_ratio=2
+                    upsampler='pixelshuffle'
+                    model = ATD(upscale=self.netscale,
+                                embed_dim=embed_dim,
+                                depths=depths,
+                                num_heads=num_heads,
+                                window_size=window_size,
+                                category_size=256,
+                                num_tokens=128,
+                                reducted_dim=20,
+                                convffn_kernel_size=5,
+                                mlp_ratio=mlp_ratio,
+                                upsampler=upsampler,
+                                use_checkpoint=False,
+                                )
 
             self.upsampler = None
             if model:
