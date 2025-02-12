@@ -270,10 +270,10 @@ Optimized primarily for PAL resolution (NTSC might work good as well)."""],
                                         "https://openmodeldb.info/models/4x-NomosWebPhoto-RealPLKSR", 
 """4x RealPLKSR model for photography, trained with realistic noise, lens blur, jpg and webp re-compression."""],
 
-#     "4xNomos2_hq_drct-l.pth"          : ["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_drct-l/4xNomos2_hq_drct-l.pth", 
-#                                         "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_drct-l",
-# """An drct-l 4x upscaling model, similiar to the 4xNomos2_hq_atd, 4xNomos2_hq_dat2 and 4xNomos2_hq_mosr models, trained and for usage on non-degraded input to give good quality output.
-# """],
+    "4xNomos2_hq_drct-l.pth"          : ["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_drct-l/4xNomos2_hq_drct-l.pth", 
+                                        "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_drct-l",
+"""An drct-l 4x upscaling model, similiar to the 4xNomos2_hq_atd, 4xNomos2_hq_dat2 and 4xNomos2_hq_mosr models, trained and for usage on non-degraded input to give good quality output.
+"""],
 
 #     "4xNomos2_hq_atd.pth"             : ["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_atd/4xNomos2_hq_atd.pth", 
 #                                          "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_atd",
@@ -306,8 +306,8 @@ def get_model_type(model_name):
         model_type = "RealPLKSR_dysample"
     elif any(value in model_name.lower() for value in ("realplksr", "rplksr", "realplskr")):
         model_type = "RealPLKSR"
-    elif "drct-l" in model_name.lower():
-        model_type = "DRCT-L"
+    elif "drct" in model_name.lower():
+        model_type = "DRCT"
     elif "atd" in model_name.lower():
         model_type = "ATD"
     return f"{model_type}, {model_name}"
@@ -343,7 +343,6 @@ class Upscale:
                 modelInUse = f"_{os.path.splitext(upscale_model)[0]}"
             
             self.netscale = 1 if any(sub in upscale_model for sub in ("x1", "1x")) else (2 if any(sub in upscale_model for sub in ("x2", "2x")) else 4)
-            loadnet = None
             model = None
             is_auto_split_upscale = True
             half = True if torch.cuda.is_available() else False
@@ -411,11 +410,24 @@ class Upscale:
                     elif upscale_type == "RealPLKSR":
                         half = False if "RealPLSKR" in upscale_model else half
                         model = realplksr(dim=64, n_blocks=28, kernel_size=17, split_ratio=0.25, upscaling_factor=self.netscale)
+                elif upscale_type == "DRCT":
+                    half = False
+                    from basicsr.archs.DRCT_arch import DRCT
+                    window_size = 16
+                    compress_ratio = 3
+                    squeeze_factor = 30
+                    depths = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+                    embed_dim = 180
+                    num_heads = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+                    mlp_ratio = 2
+                    upsampler = "pixelshuffle"
+                    model = DRCT(upscale=self.netscale, in_chans=3,  img_size= 64, window_size=window_size, compress_ratio=compress_ratio,squeeze_factor=squeeze_factor,
+                        conv_scale= 0.01, overlap_ratio= 0.5, img_range= 1., depths=depths,
+                        embed_dim=embed_dim, num_heads=num_heads, gc= 32,
+                        mlp_ratio=mlp_ratio, upsampler=upsampler, resi_connection= '1conv')
 
             self.upsampler = None
-            if loadnet:
-                self.upsampler = RealESRGANer(scale=self.netscale, loadnet=loadnet, model=model, tile=0, tile_pad=10, pre_pad=0, half=half)
-            elif model:
+            if model:
                 self.upsampler = RealESRGANer(scale=self.netscale, model_path=os.path.join("weights", "upscale", upscale_model), model=model, tile=0, tile_pad=10, pre_pad=0, half=half)
             elif upscale_model:
                 self.upsampler = None
@@ -684,7 +696,7 @@ def main():
     for key, _ in typed_upscale_models.items():
         upscale_type, upscale_model = key.split(", ", 1)
         if tmptype and tmptype != upscale_type:#RRDB ESRGAN
-            speed = "Fast" if tmptype == "SRVGG" else ("Slow" if any(value == tmptype for value in ("DAT", "HAT")) else "Normal")
+            speed = "Fast" if tmptype == "SRVGG" else ("Slow" if any(value == tmptype for value in ("DAT", "HAT", "DRCT")) else "Normal")
             upscale_model_header = f"| Upscale Model | Info, Type: {tmptype}, Model execution speed: {speed} | Download URL |\n|------------|------|--------------|"
             upscale_model_tables.append(upscale_model_header + "\n" + "\n".join(rows))
             rows.clear()
