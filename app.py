@@ -6,6 +6,7 @@ import numpy as np
 import gradio as gr
 import torch
 import traceback
+import math
 from collections import defaultdict
 from facexlib.utils.misc import download_from_url
 from basicsr.utils.realesrganer import RealESRGANer
@@ -68,50 +69,50 @@ upscale_models = {
     
     "4xLSDIRCompact.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompact/4xLSDIRCompact.pth",
                                 "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompact", 
-"""Upscale small good quality photos to 4x their size. This is my first ever released self-trained sisr upscaling model."""],
+"""Phhofm: Upscale small good quality photos to 4x their size. This is my first ever released self-trained sisr upscaling model."""],
      
     "4xLSDIRCompactC.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompactC/4xLSDIRCompactC.pth",
                                 "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompactC", 
-"""4x photo upscaler that handler jpg compression. Trying to extend my previous model to be able to handle compression (JPG 100-30) by manually altering the training dataset, since 4xLSDIRCompact cant handle compression. Use this instead of 4xLSDIRCompact if your photo has compression (like an image from the web)."""],
+"""Phhofm: 4x photo upscaler that handler jpg compression. Trying to extend my previous model to be able to handle compression (JPG 100-30) by manually altering the training dataset, since 4xLSDIRCompact cant handle compression. Use this instead of 4xLSDIRCompact if your photo has compression (like an image from the web)."""],
          
     "4xLSDIRCompactR.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompactC/4xLSDIRCompactR.pth",
                                 "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompactC", 
-"""4x photo uspcaler that handles jpg compression, noise and slight. Extending my last 4xLSDIRCompact model to Real-ESRGAN, meaning trained on synthetic data instead to handle more kinds of degradations, it should be able to handle compression, noise, and slight blur."""],
+"""Phhofm: 4x photo uspcaler that handles jpg compression, noise and slight. Extending my last 4xLSDIRCompact model to Real-ESRGAN, meaning trained on synthetic data instead to handle more kinds of degradations, it should be able to handle compression, noise, and slight blur."""],
 
     "4xLSDIRCompactN.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompact3/4xLSDIRCompactC3.pth",
                                 "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompact3", 
-"""Upscale good quality input photos to x4 their size. The original 4xLSDIRCompact a bit more trained, cannot handle degradation.
+"""Phhofm: Upscale good quality input photos to x4 their size. The original 4xLSDIRCompact a bit more trained, cannot handle degradation.
 I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggestion is, if you have good quality input images use 4xLSDIRCompactN3, otherwise try 4xLSDIRCompactC3 which will be able to handle jpg compression and a bit of blur, or then 4xLSDIRCompactCR3, which is an interpolation between C3 and R3 to be able to handle a bit of noise additionally."""],
 
     "4xLSDIRCompactC3.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompact3/4xLSDIRCompactC3.pth",
                                 "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompact3", 
-"""Upscale compressed photos to x4 their size. Able to handle JPG compression (30-100).
+"""Phhofm: Upscale compressed photos to x4 their size. Able to handle JPG compression (30-100).
 I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggestion is, if you have good quality input images use 4xLSDIRCompactN3, otherwise try 4xLSDIRCompactC3 which will be able to handle jpg compression and a bit of blur, or then 4xLSDIRCompactCR3, which is an interpolation between C3 and R3 to be able to handle a bit of noise additionally."""],
 
     "4xLSDIRCompactR3.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompact3/4xLSDIRCompactR3.pth",
                                 "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompact3", 
-"""Upscale (degraded) photos to x4 their size. Trained on synthetic data, meant to handle more degradations.
+"""Phhofm: Upscale (degraded) photos to x4 their size. Trained on synthetic data, meant to handle more degradations.
 I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggestion is, if you have good quality input images use 4xLSDIRCompactN3, otherwise try 4xLSDIRCompactC3 which will be able to handle jpg compression and a bit of blur, or then 4xLSDIRCompactCR3, which is an interpolation between C3 and R3 to be able to handle a bit of noise additionally."""],
 
     "4xLSDIRCompactCR3.pth": ["https://github.com/Phhofm/models/releases/download/4xLSDIRCompact3/4xLSDIRCompactCR3.pth",
                                 "https://github.com/Phhofm/models/releases/tag/4xLSDIRCompact3", 
-"""I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggestion is, if you have good quality input images use 4xLSDIRCompactN3, otherwise try 4xLSDIRCompactC3 which will be able to handle jpg compression and a bit of blur, or then 4xLSDIRCompactCR3, which is an interpolation between C3 and R3 to be able to handle a bit of noise additionally."""],
+"""Phhofm: I am releasing the Series 3 from my 4xLSDIRCompact models. In general my suggestion is, if you have good quality input images use 4xLSDIRCompactN3, otherwise try 4xLSDIRCompactC3 which will be able to handle jpg compression and a bit of blur, or then 4xLSDIRCompactCR3, which is an interpolation between C3 and R3 to be able to handle a bit of noise additionally."""],
 
     "2xParimgCompact.pth": ["https://github.com/Phhofm/models/releases/download/2xParimgCompact/2xParimgCompact.pth",
                                 "https://github.com/Phhofm/models/releases/tag/2xParimgCompact", 
-"""A 2x photo upscaling compact model based on Microsoft's ImagePairs. This was one of the earliest models I started training and finished it now for release. As can be seen in the examples, this model will affect colors."""],
+"""Phhofm: A 2x photo upscaling compact model based on Microsoft's ImagePairs. This was one of the earliest models I started training and finished it now for release. As can be seen in the examples, this model will affect colors."""],
 
     "1xExposureCorrection_compact.pth": ["https://github.com/Phhofm/models/releases/download/1xExposureCorrection_compact/1xExposureCorrection_compact.pth",
                                 "https://github.com/Phhofm/models/releases/tag/1xExposureCorrection_compact", 
-"""This model is meant as an experiment to see if compact can be used to train on photos to exposure correct those using the pixel, perceptual, color, color and ldl losses. There is no brightness loss. Still it seems to kinda work."""],
+"""Phhofm: This model is meant as an experiment to see if compact can be used to train on photos to exposure correct those using the pixel, perceptual, color, color and ldl losses. There is no brightness loss. Still it seems to kinda work."""],
     
     "1xUnderExposureCorrection_compact.pth": ["https://github.com/Phhofm/models/releases/download/1xExposureCorrection_compact/1xUnderExposureCorrection_compact.pth",
                                 "https://github.com/Phhofm/models/releases/tag/1xExposureCorrection_compact", 
-"""This model is meant as an experiment to see if compact can be used to train on underexposed images to exposure correct those using the pixel, perceptual, color, color and ldl losses. There is no brightness loss. Still it seems to kinda work."""],
+"""Phhofm: This model is meant as an experiment to see if compact can be used to train on underexposed images to exposure correct those using the pixel, perceptual, color, color and ldl losses. There is no brightness loss. Still it seems to kinda work."""],
     
     "1xOverExposureCorrection_compact.pth": ["https://github.com/Phhofm/models/releases/download/1xExposureCorrection_compact/1xOverExposureCorrection_compact.pth",
                                 "https://github.com/Phhofm/models/releases/tag/1xExposureCorrection_compact", 
-"""This model is meant as an experiment to see if compact can be used to train on overexposed images to exposure correct those using the pixel, perceptual, color, color and ldl losses. There is no brightness loss. Still it seems to kinda work."""],
+"""Phhofm: This model is meant as an experiment to see if compact can be used to train on overexposed images to exposure correct those using the pixel, perceptual, color, color and ldl losses. There is no brightness loss. Still it seems to kinda work."""],
 
     # RRDBNet
     "RealESRGAN_x4plus_anime_6B.pth": ["https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
@@ -159,17 +160,17 @@ I aimed for perceptual quality without zooming in like 400%. Since RealESRGAN is
 
     "4xNomos2_otf_esrgan.pth": ["https://github.com/Phhofm/models/releases/download/4xNomos2_otf_esrgan/4xNomos2_otf_esrgan.pth",
                                "https://github.com/Phhofm/models/releases/tag/4xNomos2_otf_esrgan", 
-"""Purpose: Restoration, 4x ESRGAN model for photography, trained using the Real-ESRGAN otf degradation pipeline."""],
+"""Phhofm: Restoration, 4x ESRGAN model for photography, trained using the Real-ESRGAN otf degradation pipeline."""],
 
     "4xNomosWebPhoto_esrgan.pth": ["https://github.com/Phhofm/models/releases/download/4xNomosWebPhoto_esrgan/4xNomosWebPhoto_esrgan.pth",
                                "https://github.com/Phhofm/models/releases/tag/4xNomosWebPhoto_esrgan", 
-"""Purpose: Restoration, 4x ESRGAN model for photography, trained with realistic noise, lens blur, jpg and webp re-compression.
+"""Phhofm: Restoration, 4x ESRGAN model for photography, trained with realistic noise, lens blur, jpg and webp re-compression.
 ESRGAN version of 4xNomosWebPhoto_RealPLKSR, trained on the same dataset and in the same way."""],
 
     # DATNet
     "4xNomos8kDAT.pth"                     : ["https://github.com/Phhofm/models/releases/download/4xNomos8kDAT/4xNomos8kDAT.pth",
                                              "https://openmodeldb.info/models/4x-Nomos8kDAT", 
-"""A 4x photo upscaler with otf jpg compression, blur and resize, trained on musl's Nomos8k_sfw dataset for realisic sr, this time based on the DAT arch, as a finetune on the official 4x DAT model."""],
+"""Phhofm: A 4x photo upscaler with otf jpg compression, blur and resize, trained on musl's Nomos8k_sfw dataset for realisic sr, this time based on the DAT arch, as a finetune on the official 4x DAT model."""],
 
     "4x-DWTP-DS-dat2-v3.pth"               : ["https://objectstorage.us-phoenix-1.oraclecloud.com/n/ax6ygfvpvzka/b/open-modeldb-files/o/4x-DWTP-DS-dat2-v3.pth",
                                              "https://openmodeldb.info/models/4x-DWTP-DS-dat2-v3", 
@@ -177,23 +178,19 @@ ESRGAN version of 4xNomosWebPhoto_RealPLKSR, trained on the same dataset and in 
 
     "4xBHI_dat2_real.pth"                  : ["https://github.com/Phhofm/models/releases/download/4xBHI_dat2_real/4xBHI_dat2_real.pth",
                                              "https://github.com/Phhofm/models/releases/tag/4xBHI_dat2_real", 
-"""Purpose: 4x upscaling images. Handles realistic noise, some realistic blur, and webp and jpg (re)compression.
-Description: 4x dat2 upscaling model for web and realistic images. It handles realistic noise, some realistic blur, and webp and jpg (re)compression. Trained on my BHI dataset (390'035 training tiles) with degraded LR subset."""],
+"""Phhofm: 4x dat2 upscaling model for web and realistic images. It handles realistic noise, some realistic blur, and webp and jpg (re)compression. Trained on my BHI dataset (390'035 training tiles) with degraded LR subset."""],
 
     "4xBHI_dat2_otf.pth"                   : ["https://github.com/Phhofm/models/releases/download/4xBHI_dat2_otf/4xBHI_dat2_otf.pth",
                                              "https://github.com/Phhofm/models/releases/tag/4xBHI_dat2_otf", 
-"""Purpose: 4x upscaling images, handles noise and jpg compression
-Description: 4x dat2 upscaling model, trained with the real-esrgan otf pipeline on my bhi dataset. Handles noise and compression."""],
+"""Phhofm: 4x dat2 upscaling model, trained with the real-esrgan otf pipeline on my bhi dataset. Handles noise and compression."""],
 
     "4xBHI_dat2_multiblur.pth"             : ["https://github.com/Phhofm/models/releases/download/4xBHI_dat2_multiblurjpg/4xBHI_dat2_multiblur.pth",
                                              "https://github.com/Phhofm/models/releases/tag/4xBHI_dat2_multiblurjpg", 
-"""Purpose: 4x upscaling images, handles jpg compression
-Description: 4x dat2 upscaling model, trained with down_up,linear, cubic_mitchell, lanczos, gauss and box scaling algos, some average, gaussian and anisotropic blurs and jpg compression. Trained on my BHI sisr dataset."""],
+"""Phhofm: 4x dat2 upscaling model, trained with down_up,linear, cubic_mitchell, lanczos, gauss and box scaling algos, some average, gaussian and anisotropic blurs and jpg compression. Trained on my BHI sisr dataset."""],
 
     "4xBHI_dat2_multiblurjpg.pth"          : ["https://github.com/Phhofm/models/releases/download/4xBHI_dat2_multiblurjpg/4xBHI_dat2_multiblurjpg.pth",
                                              "https://github.com/Phhofm/models/releases/tag/4xBHI_dat2_multiblurjpg", 
-"""Purpose: 4x upscaling images, handles jpg compression
-Description: 4x dat2 upscaling model, trained with down_up,linear, cubic_mitchell, lanczos, gauss and box scaling algos, some average, gaussian and anisotropic blurs and jpg compression. Trained on my BHI sisr dataset."""],
+"""Phhofm: 4x dat2 upscaling model, trained with down_up,linear, cubic_mitchell, lanczos, gauss and box scaling algos, some average, gaussian and anisotropic blurs and jpg compression. Trained on my BHI sisr dataset."""],
 
     "4x_IllustrationJaNai_V1_DAT2_190k.pth": ["https://drive.google.com/uc?export=download&confirm=1&id=1qpioSqBkB_IkSBhEAewSSNFt6qgkBimP",
                                              "https://openmodeldb.info/models/4x-IllustrationJaNai-V1-DAT2", 
@@ -201,45 +198,64 @@ Description: 4x dat2 upscaling model, trained with down_up,linear, cubic_mitchel
 Model for color images including manga covers and color illustrations, digital art, visual novel art, artbooks, and more. 
 DAT2 version is the highest quality version but also the slowest. See the ESRGAN version for faster performance."""],
 
+    "4x-PBRify_UpscalerDAT2_V1.pth": ["https://github.com/Kim2091/Kim2091-Models/releases/download/4x-PBRify_UpscalerDAT2_V1/4x-PBRify_UpscalerDAT2_V1.pth",
+                                      "https://github.com/Kim2091/Kim2091-Models/releases/tag/4x-PBRify_UpscalerDAT2_V1", 
+"""Kim2091: Yet another model in the PBRify_Remix series. This is a new upscaler to replace the previous 4x-PBRify_UpscalerSIR-M_V2 model.
+This model far exceeds the quality of the previous, with far more natural detail generation and better reconstruction of lines and edges."""],
+
+    "4xBHI_dat2_otf_nn.pth": ["https://github.com/Phhofm/models/releases/download/4xBHI_dat2_otf_nn/4xBHI_dat2_otf_nn.pth",
+                              "https://github.com/Phhofm/models/releases/tag/4xBHI_dat2_otf_nn", 
+"""Phhofm: 4x dat2 upscaling model, trained with the real-esrgan otf pipeline but without noise, on my bhi dataset. Handles resizes, and jpg compression."""],
+
     # HAT
     "4xNomos8kSCHAT-L.pth"  : ["https://github.com/Phhofm/models/releases/download/4xNomos8kSCHAT/4xNomos8kSCHAT-L.pth",
                               "https://openmodeldb.info/models/4x-Nomos8kSCHAT-L", 
-"""4x photo upscaler with otf jpg compression and blur, trained on musl's Nomos8k_sfw dataset for realisic sr. Since this is a big model, upscaling might take a while."""],
+"""Phhofm: 4x photo upscaler with otf jpg compression and blur, trained on musl's Nomos8k_sfw dataset for realisic sr. Since this is a big model, upscaling might take a while."""],
 
     "4xNomos8kSCHAT-S.pth"  : ["https://github.com/Phhofm/models/releases/download/4xNomos8kSCHAT/4xNomos8kSCHAT-S.pth",
                               "https://openmodeldb.info/models/4x-Nomos8kSCHAT-S", 
-"""4x photo upscaler with otf jpg compression and blur, trained on musl's Nomos8k_sfw dataset for realisic sr. HAT-S version/model."""],
+"""Phhofm: 4x photo upscaler with otf jpg compression and blur, trained on musl's Nomos8k_sfw dataset for realisic sr. HAT-S version/model."""],
 
     "4xNomos8kHAT-L_otf.pth": ["https://github.com/Phhofm/models/releases/download/4xNomos8kHAT-L_otf/4xNomos8kHAT-L_otf.pth",
                               "https://openmodeldb.info/models/4x-Nomos8kHAT-L-otf", 
-"""4x photo upscaler trained with otf"""],
+"""Phhofm: 4x photo upscaler trained with otf"""],
+
+    "4xBHI_small_hat-l.pth": ["https://github.com/Phhofm/models/releases/download/4xBHI_small_hat-l/4xBHI_small_hat-l.pth",
+                              "https://github.com/Phhofm/models/releases/tag/4xBHI_small_hat-l", 
+"""Phhofm: 4x hat-l upscaling model for good quality input. This model does not handle any degradations.
+This model is rather soft, I tried to balance sharpness and faithfulness/non-artifacts.
+For a bit sharper output, but can generate a bit of artifacts, you can try the 4xBHI_small_hat-l_sharp version,
+also included in this release, which might still feel soft if you are used to sharper outputs."""],
 
     # RealPLKSR_dysample
     "4xHFA2k_ludvae_realplksr_dysample.pth": ["https://github.com/Phhofm/models/releases/download/4xHFA2k_ludvae_realplksr_dysample/4xHFA2k_ludvae_realplksr_dysample.pth",
                                              "https://openmodeldb.info/models/4x-HFA2k-ludvae-realplksr-dysample", 
-"""A Dysample RealPLKSR 4x upscaling model for anime single-image resolution."""],
+"""Phhofm: A Dysample RealPLKSR 4x upscaling model for anime single-image resolution."""],
 
     "4xArtFaces_realplksr_dysample.pth"    : ["https://github.com/Phhofm/models/releases/download/4xArtFaces_realplksr_dysample/4xArtFaces_realplksr_dysample.pth",
                                              "https://openmodeldb.info/models/4x-ArtFaces-realplksr-dysample", 
-"""A Dysample RealPLKSR 4x upscaling model for art / painted faces."""],
+"""Phhofm: A Dysample RealPLKSR 4x upscaling model for art / painted faces."""],
 
-    "4x-PBRify_RPLKSRd_V3.pth"             : ["https://github.com/Kim2091/Kim2091-Models/releases/download/4x-PBRify_RPLKSRd_V3/4x-PBRify_RPLKSRd_V3.pth", "https://openmodeldb.info/models/4x-PBRify-RPLKSRd-V3", 
-"""This model is roughly 8x faster than the current DAT2 model, while being higher quality. It produces far more natural detail, resolves lines and edges more smoothly, and cleans up compression artifacts better."""],
+    "4x-PBRify_RPLKSRd_V3.pth"             : ["https://github.com/Kim2091/Kim2091-Models/releases/download/4x-PBRify_RPLKSRd_V3/4x-PBRify_RPLKSRd_V3.pth",
+                                             "https://github.com/Kim2091/Kim2091-Models/releases/tag/4x-PBRify_RPLKSRd_V3", 
+"""Kim2091: This update brings a new upscaling model, 4x-PBRify_RPLKSRd_V3. This model is roughly 8x faster than the current DAT2 model, while being higher quality. 
+It produces far more natural detail, resolves lines and edges more smoothly, and cleans up compression artifacts better.
+As a result of those improvements, PBR is also much improved. It tends to be clearer with less defined artifacts."""],
 
     "4xNomos2_realplksr_dysample.pth"      : ["https://github.com/Phhofm/models/releases/download/4xNomos2_realplksr_dysample/4xNomos2_realplksr_dysample.pth",
                                              "https://openmodeldb.info/models/4x-Nomos2-realplksr-dysample", 
-"""Description: A Dysample RealPLKSR 4x upscaling model that was trained with / handles jpg compression down to 70 on the Nomosv2 dataset, preserves DoF.
+"""Phhofm: A Dysample RealPLKSR 4x upscaling model that was trained with / handles jpg compression down to 70 on the Nomosv2 dataset, preserves DoF.
 This model affects / saturate colors, which can be counteracted a bit by using wavelet color fix, as used in these examples."""],
 
     # RealPLKSR
     "2x-AnimeSharpV2_RPLKSR_Sharp.pth": ["https://github.com/Kim2091/Kim2091-Models/releases/download/2x-AnimeSharpV2_Set/2x-AnimeSharpV2_RPLKSR_Sharp.pth",
-                                        "https://openmodeldb.info/models/2x-AnimeSharpV2-RPLKSR-Sharp", 
+                                        "https://github.com/Kim2091/Kim2091-Models/releases/tag/2x-AnimeSharpV2_Set", 
 """Kim2091: This is my first anime model in years. Hopefully you guys can find a good use-case for it.
 RealPLKSR (Higher quality, slower) Sharp: For heavily degraded sources. Sharp models have issues depth of field but are best at removing artifacts
 """],
 
     "2x-AnimeSharpV2_RPLKSR_Soft.pth" : ["https://github.com/Kim2091/Kim2091-Models/releases/download/2x-AnimeSharpV2_Set/2x-AnimeSharpV2_RPLKSR_Soft.pth",
-                                         "https://openmodeldb.info/models/2x-AnimeSharpV2-RPLKSR-Soft", 
+                                         "https://github.com/Kim2091/Kim2091-Models/releases/tag/2x-AnimeSharpV2_Set", 
 """Kim2091: This is my first anime model in years. Hopefully you guys can find a good use-case for it.
 RealPLKSR (Higher quality, slower) Soft: For cleaner sources. Soft models preserve depth of field but may not remove other artifacts as well"""],
 
@@ -268,25 +284,62 @@ Optimized primarily for PAL resolution (NTSC might work good as well)."""],
 
     "4xNomosWebPhoto_RealPLKSR.pth"   : ["https://github.com/Phhofm/models/releases/download/4xNomosWebPhoto_RealPLKSR/4xNomosWebPhoto_RealPLKSR.pth",
                                         "https://openmodeldb.info/models/4x-NomosWebPhoto-RealPLKSR", 
-"""4x RealPLKSR model for photography, trained with realistic noise, lens blur, jpg and webp re-compression."""],
+"""Phhofm: 4x RealPLKSR model for photography, trained with realistic noise, lens blur, jpg and webp re-compression."""],
 
     # DRCT
     "4xNomos2_hq_drct-l.pth"          : ["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_drct-l/4xNomos2_hq_drct-l.pth", 
                                         "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_drct-l",
-"""An drct-l 4x upscaling model, similiar to the 4xNomos2_hq_atd, 4xNomos2_hq_dat2 and 4xNomos2_hq_mosr models, trained and for usage on non-degraded input to give good quality output.
+"""Phhofm: An drct-l 4x upscaling model, similiar to the 4xNomos2_hq_atd, 4xNomos2_hq_dat2 and 4xNomos2_hq_mosr models, trained and for usage on non-degraded input to give good quality output.
 """],
 
     # ATD
     "4xNomos2_hq_atd.pth"             : ["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_atd/4xNomos2_hq_atd.pth", 
                                          "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_atd",
-"""An atd 4x upscaling model, similiar to the 4xNomos2_hq_dat2 or 4xNomos2_hq_mosr models, trained and for usage on non-degraded input to give good quality output.
+"""Phhofm: An atd 4x upscaling model, similiar to the 4xNomos2_hq_dat2 or 4xNomos2_hq_mosr models, trained and for usage on non-degraded input to give good quality output.
 """],
 
     # MoSR
     "4xNomos2_hq_mosr.pth"             : ["https://github.com/Phhofm/models/releases/download/4xNomos2_hq_mosr/4xNomos2_hq_mosr.pth", 
                                          "https://github.com/Phhofm/models/releases/tag/4xNomos2_hq_mosr",
-"""A 4x MoSR upscaling model, meant for non-degraded input, since this model was trained on non-degraded input to give good quality output.
+"""Phhofm: A 4x MoSR upscaling model, meant for non-degraded input, since this model was trained on non-degraded input to give good quality output.
 """],
+    
+    "2x-AnimeSharpV2_MoSR_Sharp.pth"             : ["https://github.com/Kim2091/Kim2091-Models/releases/download/2x-AnimeSharpV2_Set/2x-AnimeSharpV2_MoSR_Sharp.pth", 
+                                         "https://github.com/Kim2091/Kim2091-Models/releases/tag/2x-AnimeSharpV2_Set",
+"""Kim2091: This is my first anime model in years. Hopefully you guys can find a good use-case for it.
+MoSR (Lower quality, faster), Sharp: For heavily degraded sources. Sharp models have issues depth of field but are best at removing artifacts
+"""],
+    
+    "2x-AnimeSharpV2_MoSR_Soft.pth"             : ["https://github.com/Kim2091/Kim2091-Models/releases/download/2x-AnimeSharpV2_Set/2x-AnimeSharpV2_MoSR_Soft.pth", 
+                                         "https://github.com/Kim2091/Kim2091-Models/releases/tag/2x-AnimeSharpV2_Set",
+"""Kim2091: This is my first anime model in years. Hopefully you guys can find a good use-case for it.
+MoSR (Lower quality, faster), Soft: For cleaner sources. Soft models preserve depth of field but may not remove other artifacts as well
+"""],
+
+    # SRFormer
+    "4xNomos8kSCSRFormer.pth"             : ["https://github.com/Phhofm/models/releases/download/4xNomos8kSCSRFormer/4xNomos8kSCSRFormer.pth", 
+                                             "https://github.com/Phhofm/models/releases/tag/4xNomos8kSCSRFormer",
+"""Phhofm: 4x photo upscaler with otf jpg compression and blur, trained on musl's Nomos8k_sfw dataset for realisic sr.
+"""],
+
+#     "4xFrankendata_FullDegradation_g_460000.pth" : ["https://drive.google.com/uc?export=download&confirm=1&id=1PZrj-8ofxhORv_OgTVSoRt3dYi-BtiDj", 
+#                                                     "https://openmodeldb.info/models/4x-Frankendata-FullDegradation-SRFormer",
+# """Description: 4x realistic upscaler that may also work for general purpose usage. 
+# It was trained with OTF random degradation with a very low to very high range of degradations, including blur, noise, and compression. 
+# Trained with the same Frankendata dataset that I used for the pretrain model.
+# """],
+
+#     "FrankendataPretrainer_SRFormer400K_g.pth" : ["https://drive.google.com/uc?export=download&confirm=1&id=1SaKvpYYIm2Vj2m9GifUMlNCbmkE6JZmr", 
+#                                                     "https://openmodeldb.info/models/4x-FrankendataPretainer-SRFormer",
+# """Description: 4x realistic upscaler that may also work for general purpose usage. 
+# It was trained with OTF random degradation with a very low to very high range of degradations, including blur, noise, and compression. 
+# Trained with the same Frankendata dataset that I used for the pretrain model.
+# """],
+
+#     "1xFrankenfixer_SRFormerLight_g.pth" : ["https://drive.google.com/uc?export=download&confirm=1&id=1UJ0iyFn4IGNhPIgNgrQrBxYsdDloFc9I", 
+#                                                   "https://openmodeldb.info/models/1x-Frankenfixer-SRFormerLight",
+# """A 1x model designed to reduce artifacts and restore detail to images upscaled by 4xFrankendata_FullDegradation_SRFormer. It could possibly work with other upscaling models too.
+# """],
 }
 
 example_list = ["images/a01.jpg", "images/a02.jpg", "images/a03.jpg", "images/a04.jpg", "images/bus.jpg", "images/zidane.jpg", 
@@ -300,6 +353,12 @@ def get_model_type(model_name):
     model_type = "other"
     if any(value in model_name.lower() for value in ("4x-animesharp.pth", "sudo-realesrgan")):
         model_type = "ESRGAN"
+    elif "srformer" in model_name.lower():
+        model_type = "SRFormer"
+    elif ("realplksr" in model_name.lower() and "dysample" in model_name.lower()) or "rplksrd" in model_name.lower():
+        model_type = "RealPLKSR_dysample"
+    elif any(value in model_name.lower() for value in ("realplksr", "rplksr", "realplskr")):
+        model_type = "RealPLKSR"
     elif any(value in model_name.lower() for value in ("realesrgan", "realesrnet")):
         model_type = "RRDB"
     elif any(value in model_name.lower() for value in ("realesr", "exposurecorrection", "parimgcompact", "lsdircompact")):
@@ -310,10 +369,6 @@ def get_model_type(model_name):
         model_type = "DAT"
     elif "hat" in model_name.lower():
         model_type = "HAT"
-    elif ("realplksr" in model_name.lower() and "dysample" in model_name.lower()) or "rplksrd" in model_name.lower():
-        model_type = "RealPLKSR_dysample"
-    elif any(value in model_name.lower() for value in ("realplksr", "rplksr", "realplskr")):
-        model_type = "RealPLKSR"
     elif "drct" in model_name.lower():
         model_type = "DRCT"
     elif "atd" in model_name.lower():
@@ -352,124 +407,212 @@ class Upscale:
                 download_from_url(upscale_models[upscale_model][0], upscale_model, os.path.join("weights", "upscale"))
                 modelInUse = f"_{os.path.splitext(upscale_model)[0]}"
             
-            self.netscale = 1 if any(sub in upscale_model for sub in ("x1", "1x")) else (2 if any(sub in upscale_model for sub in ("x2", "2x")) else 4)
+            self.netscale = 1 if any(sub in upscale_model.lower() for sub in ("x1", "1x")) else (2 if any(sub in upscale_model.lower() for sub in ("x2", "2x")) else 4)
             model = None
             is_auto_split_upscale = True
             half = True if torch.cuda.is_available() else False
             if upscale_type:
+                # The values of the following hyperparameters are based on the research findings of the Spandrel project.
+                # https://github.com/chaiNNer-org/spandrel/tree/main/libs/spandrel/spandrel/architectures
                 from basicsr.archs.rrdbnet_arch import RRDBNet
-                # background enhancer with upscale model
-                if any(value == upscale_type for value in ("SRVGG", "RRDB", "ESRGAN")):
-                    loadnet_origin = torch.load(os.path.join("weights", "upscale", upscale_model), map_location=torch.device('cpu'), weights_only=True)
-                    if 'params_ema' in loadnet_origin or 'params' in loadnet_origin:
-                        loadnet_origin = loadnet_origin['params_ema'] if 'params_ema' in loadnet_origin else loadnet_origin['params']
+                loadnet = torch.load(os.path.join("weights", "upscale", upscale_model), map_location=torch.device('cpu'), weights_only=True)
+                if 'params_ema' in loadnet or 'params' in loadnet:
+                    loadnet = loadnet['params_ema'] if 'params_ema' in loadnet else loadnet['params']
+                # for key in loadnet_origin.keys():
+                #     print(f"{key}, {loadnet_origin[key].shape}")
                 if upscale_type == "SRVGG":
                     from basicsr.archs.srvgg_arch import SRVGGNetCompact
-                    body_max_num = self.find_max_numbers(loadnet_origin, "body")
-                    num_feat = loadnet_origin["body.0.weight"].shape[0]
-                    num_in_ch = loadnet_origin["body.0.weight"].shape[1]
-                    num_conv = body_max_num // 2 - 1 #16 if any(value in upscale_model for value in ("animevideov3", "ExposureCorrection", "ParimgCompact", "LSDIRCompact")) else 32
-                    model = SRVGGNetCompact(num_in_ch=num_in_ch, num_out_ch=3, num_feat=num_feat, num_conv=num_conv, upscale=self.netscale, act_type='prelu')
+                    body_max_num = self.find_max_numbers(loadnet, "body")
+                    num_feat     = loadnet["body.0.weight"].shape[0]
+                    num_in_ch    = loadnet["body.0.weight"].shape[1]
+                    num_conv     = body_max_num // 2 - 1
+                    model        = SRVGGNetCompact(num_in_ch=num_in_ch, num_out_ch=3, num_feat=num_feat, num_conv=num_conv, upscale=self.netscale, act_type='prelu')
                 elif upscale_type == "RRDB" or upscale_type == "ESRGAN":
                     if upscale_type == "RRDB":
-                        num_block = 1 + self.find_max_numbers(loadnet_origin, "body")
-                        num_feat = loadnet_origin["conv_first.weight"].shape[0]
+                        num_block = self.find_max_numbers(loadnet, "body") + 1
+                        num_feat  = loadnet["conv_first.weight"].shape[0]
                     else:
-                        num_block = self.find_max_numbers(loadnet_origin, "model.1.sub")
-                        num_feat = loadnet_origin["model.0.weight"].shape[0]
+                        num_block = self.find_max_numbers(loadnet, "model.1.sub")
+                        num_feat  = loadnet["model.0.weight"].shape[0]
                     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=num_feat, num_block=num_block, num_grow_ch=32, scale=self.netscale, is_real_esrgan=upscale_type == "RRDB")
                 elif upscale_type == "DAT":
                     from basicsr.archs.dat_arch import DAT
                     half = False
-                    expansion_factor = 2. if "dat2" in upscale_model.lower() else 4.
-                    model = DAT(img_size=64, in_chans=3, embed_dim=180, split_size=[8,32], depth=[6,6,6,6,6,6], num_heads=[6,6,6,6,6,6], expansion_factor=expansion_factor, upscale=self.netscale)
-                    # # Speculate on the parameters.
-                    # loadnet_origin = torch.load(os.path.join("weights", "upscale", upscale_model), map_location=torch.device('cpu'), weights_only=True)
-                    # inferred_params = self.infer_parameters_from_state_dict_for_dat(loadnet_origin, self.netscale)
-                    # for param, value in inferred_params.items():
-                    #     print(f"{param}: {value}")
+
+                    in_chans   = loadnet["conv_first.weight"].shape[1]
+                    embed_dim  = loadnet["conv_first.weight"].shape[0]
+                    num_layers = self.find_max_numbers(loadnet, "layers") + 1
+                    depth      = [6] * num_layers
+                    num_heads  = [6] * num_layers
+                    for i in range(num_layers):
+                        depth[i] = self.find_max_numbers(loadnet, f"layers.{i}.blocks") + 1
+                        num_heads[i] = loadnet[f"layers.{i}.blocks.1.attn.temperature"].shape[0] if depth[i] >= 2 else \
+                                       loadnet[f"layers.{i}.blocks.0.attn.attns.0.pos.pos3.2.weight"].shape[0] * 2
+
+                    upsampler        = "pixelshuffle" if "conv_last.weight" in loadnet else "pixelshuffledirect"
+                    resi_connection  = "1conv" if "conv_after_body.weight" in loadnet else "3conv"
+                    qkv_bias         = "layers.0.blocks.0.attn.qkv.bias" in loadnet
+                    expansion_factor = float(loadnet["layers.0.blocks.0.ffn.fc1.weight"].shape[0] / embed_dim)
+
+                    img_size = 64
+                    if "layers.0.blocks.2.attn.attn_mask_0" in loadnet:
+                        attn_mask_0_x, attn_mask_0_y, _attn_mask_0_z = loadnet["layers.0.blocks.2.attn.attn_mask_0"].shape
+                        img_size = int(math.sqrt(attn_mask_0_x * attn_mask_0_y))
+
+                    split_size = [2, 4]
+                    if "layers.0.blocks.0.attn.attns.0.rpe_biases" in loadnet:
+                        split_sizes = loadnet["layers.0.blocks.0.attn.attns.0.rpe_biases"][-1] + 1
+                        split_size = [int(x) for x in split_sizes]
+
+                    model = DAT(img_size=img_size, in_chans=in_chans, embed_dim=embed_dim, split_size=split_size, depth=depth, num_heads=num_heads, expansion_factor=expansion_factor, 
+                                qkv_bias=qkv_bias, resi_connection=resi_connection, upsampler=upsampler, upscale=self.netscale)
                 elif upscale_type == "HAT":
                     half = False
                     from basicsr.archs.hat_arch import HAT
-                    # The parameters are derived from the XPixelGroup project files: HAT-L_SRx4_ImageNet-pretrain.yml and HAT-S_SRx4.yml.
-                    # https://github.com/XPixelGroup/HAT/tree/main/options/test
+                    in_chans = loadnet["conv_first.weight"].shape[1]
+                    embed_dim = loadnet["conv_first.weight"].shape[0]
+                    window_size = int(math.sqrt(loadnet["relative_position_index_SA"].shape[0]))
+                    num_layers = self.find_max_numbers(loadnet, "layers") + 1
+                    depths      = [6] * num_layers
+                    num_heads   = [6] * num_layers
+                    for i in range(num_layers):
+                        depths[i] = self.find_max_numbers(loadnet, f"layers.{i}.residual_group.blocks") + 1
+                        num_heads[i] = loadnet[f"layers.{i}.residual_group.overlap_attn.relative_position_bias_table"].shape[1]
+                    resi_connection = "1conv" if "conv_after_body.weight" in loadnet else "identity"
+
+                    qkv_bias = "layers.0.residual_group.blocks.0.attn.qkv.bias" in loadnet
+                    patch_norm = "patch_embed.norm.weight" in loadnet
+                    ape = "absolute_pos_embed" in loadnet
+
+                    mlp_hidden_dim = int(loadnet["layers.0.residual_group.blocks.0.mlp.fc1.weight"].shape[0])
+                    mlp_ratio = mlp_hidden_dim / embed_dim
+                    upsampler = "pixelshuffle"
+
                     if "hat-l" in upscale_model.lower():
-                        window_size = 16
                         compress_ratio = 3
                         squeeze_factor = 30
-                        depths = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
-                        embed_dim = 180
-                        num_heads = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
-                        mlp_ratio = 2
-                        upsampler = "pixelshuffle"
                     elif "hat-s" in upscale_model.lower():
-                        window_size = 16
                         compress_ratio = 24
                         squeeze_factor = 24
-                        depths = [6, 6, 6, 6, 6, 6]
-                        embed_dim = 144
-                        num_heads = [6, 6, 6, 6, 6, 6]
-                        mlp_ratio = 2
-                        upsampler = "pixelshuffle"
-                    model = HAT(img_size=64, patch_size=1, in_chans=3, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, compress_ratio=compress_ratio,
-                                squeeze_factor=squeeze_factor, conv_scale=0.01, overlap_ratio=0.5, mlp_ratio=mlp_ratio, upsampler=upsampler, upscale=self.netscale,)
+                    model = HAT(img_size=64, patch_size=1, in_chans=in_chans, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, compress_ratio=compress_ratio,
+                                squeeze_factor=squeeze_factor, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape, patch_norm=patch_norm,
+                                upsampler=upsampler, resi_connection=resi_connection, upscale=self.netscale,)
                 elif "RealPLKSR" in upscale_type:
                     from basicsr.archs.realplksr_arch import realplksr
-                    if upscale_type == "RealPLKSR_dysample":
-                        model = realplksr(dim=64, n_blocks=28, kernel_size=17, split_ratio=0.25, upscaling_factor=self.netscale, dysample=True)
-                    elif upscale_type == "RealPLKSR":
-                        half = False if "RealPLSKR" in upscale_model else half
-                        model = realplksr(dim=64, n_blocks=28, kernel_size=17, split_ratio=0.25, upscaling_factor=self.netscale)
+                    half = False if "RealPLSKR" in upscale_model else half
+                    use_ea       = "feats.1.attn.f.0.weight" in loadnet
+                    dim          = loadnet["feats.0.weight"].shape[0]
+                    num_feats    = self.find_max_numbers(loadnet, "feats") + 1
+                    n_blocks     = num_feats - 3
+                    kernel_size  = loadnet["feats.1.lk.conv.weight"].shape[2]
+                    split_ratio  = loadnet["feats.1.lk.conv.weight"].shape[0] / dim
+                    use_dysample = "to_img.init_pos" in loadnet
+
+                    model = realplksr(upscaling_factor=self.netscale, dim=dim, n_blocks=n_blocks, kernel_size=kernel_size, split_ratio=split_ratio, use_ea=use_ea, dysample=use_dysample)
                 elif upscale_type == "DRCT":
                     half = False
                     from basicsr.archs.DRCT_arch import DRCT
-                    window_size = 16
-                    compress_ratio = 3
-                    squeeze_factor = 30
-                    depths = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
-                    embed_dim = 180
-                    num_heads = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
-                    mlp_ratio = 2
-                    upsampler = "pixelshuffle"
-                    model = DRCT(upscale=self.netscale, in_chans=3,  img_size= 64, window_size=window_size, compress_ratio=compress_ratio,squeeze_factor=squeeze_factor,
-                        conv_scale= 0.01, overlap_ratio= 0.5, img_range= 1., depths=depths,
-                        embed_dim=embed_dim, num_heads=num_heads, gc= 32,
-                        mlp_ratio=mlp_ratio, upsampler=upsampler, resi_connection= '1conv')
+
+                    in_chans    = loadnet["conv_first.weight"].shape[1]
+                    embed_dim   = loadnet["conv_first.weight"].shape[0]
+                    num_layers  = self.find_max_numbers(loadnet, "layers") + 1
+                    depths      = (6,) * num_layers
+                    num_heads   = []
+                    for i in range(num_layers):
+                        num_heads.append(loadnet[f"layers.{i}.swin1.attn.relative_position_bias_table"].shape[1])
+
+                    mlp_ratio       = loadnet["layers.0.swin1.mlp.fc1.weight"].shape[0] / embed_dim
+                    window_square   = loadnet["layers.0.swin1.attn.relative_position_bias_table"].shape[0]
+                    window_size     = (math.isqrt(window_square) + 1) // 2
+                    upsampler       = "pixelshuffle" if "conv_last.weight" in loadnet else ""
+                    resi_connection = "1conv" if "conv_after_body.weight" in loadnet else ""
+                    qkv_bias        = "layers.0.swin1.attn.qkv.bias" in loadnet
+                    gc_adjust1      = loadnet["layers.0.adjust1.weight"].shape[0]
+                    patch_norm      = "patch_embed.norm.weight" in loadnet
+                    ape             = "absolute_pos_embed" in loadnet
+
+                    model = DRCT(in_chans=in_chans,  img_size= 64, window_size=window_size, compress_ratio=3,squeeze_factor=30,
+                        conv_scale= 0.01, overlap_ratio= 0.5, img_range= 1., depths=depths, embed_dim=embed_dim, num_heads=num_heads, 
+                        mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape, patch_norm=patch_norm, use_checkpoint=False,
+                        upscale=self.netscale, upsampler=upsampler, resi_connection=resi_connection, gc =gc_adjust1,)
                 elif upscale_type == "ATD":
                     half = False
                     from basicsr.archs.atd_arch import ATD
-                    window_size = 16
-                    depths=[6, 6, 6, 6, 6, 6,]
-                    embed_dim=210
-                    num_heads=[6, 6, 6, 6, 6, 6,]
-                    mlp_ratio=2
-                    upsampler='pixelshuffle'
-                    model = ATD(upscale=self.netscale,
-                                embed_dim=embed_dim,
-                                depths=depths,
-                                num_heads=num_heads,
-                                window_size=window_size,
-                                category_size=256,
-                                num_tokens=128,
-                                reducted_dim=20,
-                                convffn_kernel_size=5,
-                                mlp_ratio=mlp_ratio,
-                                upsampler=upsampler,
-                                use_checkpoint=False,
-                                )
+                    in_chans    = loadnet["conv_first.weight"].shape[1]
+                    embed_dim   = loadnet["conv_first.weight"].shape[0]
+                    window_size = math.isqrt(loadnet["relative_position_index_SA"].shape[0])
+                    num_layers  = self.find_max_numbers(loadnet, "layers") + 1
+                    depths      = [6] * num_layers
+                    num_heads   = [6] * num_layers
+                    for i in range(num_layers):
+                        depths[i] = self.find_max_numbers(loadnet, f"layers.{i}.residual_group.layers") + 1
+                        num_heads[i] = loadnet[f"layers.{i}.residual_group.layers.0.attn_win.relative_position_bias_table"].shape[1]
+                    num_tokens          = loadnet["layers.0.residual_group.layers.0.attn_atd.scale"].shape[0]
+                    reducted_dim        = loadnet["layers.0.residual_group.layers.0.attn_atd.wq.weight"].shape[0]
+                    convffn_kernel_size = loadnet["layers.0.residual_group.layers.0.convffn.dwconv.depthwise_conv.0.weight"].shape[2]
+                    mlp_ratio           = (loadnet["layers.0.residual_group.layers.0.convffn.fc1.weight"].shape[0] / embed_dim)
+                    qkv_bias            = "layers.0.residual_group.layers.0.wqkv.bias" in loadnet
+                    ape                 = "absolute_pos_embed" in loadnet
+                    patch_norm          = "patch_embed.norm.weight" in loadnet
+                    resi_connection     = "1conv" if "layers.0.conv.weight" in loadnet else "3conv"
+
+                    if "conv_up1.weight" in loadnet:
+                        upsampler = "nearest+conv"
+                    elif "conv_before_upsample.0.weight" in loadnet:
+                        upsampler = "pixelshuffle"
+                    elif "conv_last.weight" in loadnet:
+                        upsampler = ""
+                    else:
+                        upsampler = "pixelshuffledirect"
+
+                    is_light = upsampler == "pixelshuffledirect" and embed_dim == 48
+                    category_size = 128 if is_light else 256
+
+                    model = ATD(in_chans=in_chans, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, category_size=category_size,
+                                num_tokens=num_tokens, reducted_dim=reducted_dim, convffn_kernel_size=convffn_kernel_size, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape,
+                                patch_norm=patch_norm, use_checkpoint=False, upscale=self.netscale, upsampler=upsampler, resi_connection='1conv',)
                 elif upscale_type == "MoSR":
                     from basicsr.archs.mosr_arch import mosr
-                    model = mosr(in_ch = 3,
-                                out_ch = 3,
-                                upscale = self.netscale,
-                                n_block = 24,
-                                dim = 64,
-                                upsampler = "ps",  # "ps" "ds"
-                                drop_path = 0.0,
-                                kernel_size = 7,
-                                expansion_ratio = 1.5,
-                                conv_ratio = 1.0
-                                )
+                    n_block         = self.find_max_numbers(loadnet, "gblocks") - 5
+                    in_ch           = loadnet["gblocks.0.weight"].shape[1]
+                    out_ch          = loadnet["upsampler.end_conv.weight"].shape[0] if "upsampler.init_pos" in loadnet else in_ch
+                    dim             = loadnet["gblocks.0.weight"].shape[0]
+                    expansion_ratio = (loadnet["gblocks.1.fc1.weight"].shape[0] / loadnet["gblocks.1.fc1.weight"].shape[1]) / 2
+                    conv_ratio      = loadnet["gblocks.1.conv.weight"].shape[0] / dim
+                    kernel_size     = loadnet["gblocks.1.conv.weight"].shape[2]
+                    upsampler       = "dys" if "upsampler.init_pos" in loadnet else ("gps" if "upsampler.in_to_k.weight" in loadnet else "ps")
+
+                    model = mosr(in_ch = in_ch, out_ch = out_ch, upscale = self.netscale, n_block = n_block, dim = dim,
+                                upsampler = upsampler, kernel_size = kernel_size, expansion_ratio = expansion_ratio, conv_ratio = conv_ratio,)
+                elif upscale_type == "SRFormer":
+                    half = False
+                    from basicsr.archs.srformer_arch import SRFormer
+                    in_chans   = loadnet["conv_first.weight"].shape[1]
+                    embed_dim  = loadnet["conv_first.weight"].shape[0]
+                    ape        = "absolute_pos_embed" in loadnet
+                    patch_norm = "patch_embed.norm.weight" in loadnet
+                    qkv_bias   = "layers.0.residual_group.blocks.0.attn.q.bias" in loadnet
+                    mlp_ratio  = float(loadnet["layers.0.residual_group.blocks.0.mlp.fc1.weight"].shape[0] / embed_dim)
+
+                    num_layers = self.find_max_numbers(loadnet, "layers") + 1
+                    depths     = [6] * num_layers
+                    num_heads  = [6] * num_layers
+                    for i in range(num_layers):
+                        depths[i] = self.find_max_numbers(loadnet, f"layers.{i}.residual_group.blocks") + 1
+                        num_heads[i] = loadnet[f"layers.{i}.residual_group.blocks.0.attn.relative_position_bias_table"].shape[1]
+
+                    if "conv_hr.weight" in loadnet:
+                        upsampler = "nearest+conv"
+                    elif "conv_before_upsample.0.weight" in loadnet:
+                        upsampler = "pixelshuffle"
+                    elif "upsample.0.weight" in loadnet:
+                        upsampler = "pixelshuffledirect"
+                    resi_connection = "1conv" if "conv_after_body.weight" in loadnet else "3conv"
+
+                    window_size = int(math.sqrt(loadnet["layers.0.residual_group.blocks.0.attn.relative_position_bias_table"].shape[0])) + 1
+
+                    model = SRFormer(img_size=64, in_chans=in_chans, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, mlp_ratio=mlp_ratio, 
+                                 qkv_bias=qkv_bias, qk_scale=None, ape=ape, patch_norm=patch_norm, upscale=self.netscale, upsampler=upsampler, resi_connection=resi_connection,)
 
             self.upsampler = None
             if model:
@@ -623,83 +766,6 @@ class Upscale:
 
         return tuple(max_values[findkey] for findkey in findkeys) if len(findkeys) > 1 else max_values[findkeys[0]]
 
-    def infer_parameters_from_state_dict_for_dat(self, state_dict, upscale=4):
-        if "params" in state_dict:
-            state_dict = state_dict["params"]
-        elif "params_ema" in state_dict:
-            state_dict = state_dict["params_ema"]
-
-        inferred_params = {}
-
-        # Speculate on the depth.
-        depth = {}
-        for key in state_dict.keys():
-            if "blocks" in key:
-                layer = int(key.split(".")[1])
-                block = int(key.split(".")[3])
-                depth[layer] = max(depth.get(layer, 0), block + 1)
-        inferred_params["depth"] = [depth[layer] for layer in sorted(depth.keys())]
-
-        # Speculate on the number of num_heads per layer.
-        # ex.
-        # layers.0.blocks.1.attn.temperature: torch.Size([6, 1, 1])
-        # layers.5.blocks.5.attn.temperature: torch.Size([6, 1, 1])
-        # The shape of temperature is [num_heads, 1, 1].
-        num_heads = []
-        for layer in range(len(inferred_params["depth"])):
-            for block in range(inferred_params["depth"][layer]):
-                key = f"layers.{layer}.blocks.{block}.attn.temperature"
-                if key in state_dict:
-                    num_heads_layer = state_dict[key].shape[0]
-                    num_heads.append(num_heads_layer)
-                    break
-
-        inferred_params["num_heads"] = num_heads
-
-        # Speculate on embed_dim.
-        # ex. layers.0.blocks.0.attn.qkv.weight: torch.Size([540, 180])
-        for key in state_dict.keys():
-            if "attn.qkv.weight" in key:
-                qkv_weight = state_dict[key]
-                embed_dim = qkv_weight.shape[1]  # Note: The in_features of qkv corresponds to embed_dim.
-                inferred_params["embed_dim"] = embed_dim
-                break
-
-        # Speculate on split_size.
-        # ex.
-        # layers.0.blocks.0.attn.attns.0.rpe_biases: torch.Size([945, 2])
-        # layers.0.blocks.0.attn.attns.0.relative_position_index: torch.Size([256, 256])
-        # layers.0.blocks.2.attn.attn_mask_0: torch.Size([16, 256, 256])
-        # layers.0.blocks.2.attn.attn_mask_1: torch.Size([16, 256, 256])
-        for key in state_dict.keys():
-            if "relative_position_index" in key:
-                relative_position_size = state_dict[key].shape[0]
-                # Determine split_size[0] and split_size[1] based on the provided data.
-                split_size_0, split_size_1 = 8, relative_position_size // 8  # 256 = 8 * 32
-                inferred_params["split_size"] = [split_size_0, split_size_1]
-                break
-
-        # Speculate on the expansion_factor.
-        # ex.
-        # layers.0.blocks.0.ffn.fc1.weight: torch.Size([360, 180])
-        # layers.5.blocks.5.ffn.fc1.weight: torch.Size([360, 180])
-        if "embed_dim" in inferred_params:
-            for key in state_dict.keys():
-                if "ffn.fc1.weight" in key:
-                    fc1_weight = state_dict[key]
-                    expansion_factor = fc1_weight.shape[0] // inferred_params["embed_dim"]
-                    inferred_params["expansion_factor"] = expansion_factor
-                    break
-
-        inferred_params["img_size"] = 64
-        inferred_params["in_chans"] = 3  # Assume an RGB image.
-
-        for key in state_dict.keys():
-            print(f"{key}: {state_dict[key].shape}")
-
-        return inferred_params
-
-
     def imwriteUTF8(self, save_path, image): # `cv2.imwrite` does not support writing files to UTF-8 file paths.
         img_name = os.path.basename(save_path)
         _, extension = os.path.splitext(img_name)
@@ -727,11 +793,6 @@ def main():
     Practically, the aforementioned algorithm is used to restore your **old photos** or improve **AI-generated faces**.<br>
     To use it, simply just upload the concerned image.<br>
     """
-    article = r"""
-    [![download](https://img.shields.io/github/downloads/TencentARC/GFPGAN/total.svg)](https://github.com/TencentARC/GFPGAN/releases)
-    [![GitHub Stars](https://img.shields.io/github/stars/TencentARC/GFPGAN?style=social)](https://github.com/TencentARC/GFPGAN)
-    [![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2101.04061)
-    """
 
     upscale = Upscale()
     
@@ -741,7 +802,7 @@ def main():
     for key, _ in typed_upscale_models.items():
         upscale_type, upscale_model = key.split(", ", 1)
         if tmptype and tmptype != upscale_type:#RRDB ESRGAN
-            speed = "Fast" if tmptype == "SRVGG" else ("Slow" if any(value == tmptype for value in ("DAT", "HAT", "DRCT", "ATD")) else "Normal")
+            speed = "Fast" if tmptype == "SRVGG" else ("Slow" if any(value == tmptype for value in ("DAT", "HAT", "DRCT", "ATD", "SRFormer")) else "Normal")
             upscale_model_header = f"| Upscale Model | Info, Type: {tmptype}, Model execution speed: {speed} | Download URL |\n|------------|------|--------------|"
             upscale_model_tables.append(upscale_model_header + "\n" + "\n".join(rows))
             rows.clear()
@@ -749,7 +810,7 @@ def main():
         value = upscale_models[upscale_model]
         row = f"| [{upscale_model}]({value[1]}) | " + value[2].replace("\n", "<br>") + " | [download]({value[0]}) |"
         rows.append(row)
-    speed = "Fast" if tmptype == "SRVGG" else ("Slow" if any(value == tmptype for value in ("DAT", "HAT", "DRCT", "ATD")) else "Normal")
+    speed = "Fast" if tmptype == "SRVGG" else ("Slow" if any(value == tmptype for value in ("DAT", "HAT", "DRCT", "ATD", "SRFormer")) else "Normal")
     upscale_model_header = f"| Upscale Model Name | Info, Type: {tmptype}, Model execution speed: {speed} | Download URL |\n|------------|------|--------------|"
     upscale_model_tables.append(upscale_model_header + "\n" + "\n".join(rows))
 
