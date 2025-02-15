@@ -39,16 +39,20 @@ def auto_split_upscale(
     overlap: int = 32,
     max_depth: int = None,
     current_depth: int = 1,
+    current_tile: int = 1,  # Tracks the current tile being processed
+    total_tiles: int = 1,  # Total number of tiles at this depth level
 ):
     # Attempt to upscale if unknown depth or if reached known max depth
     if max_depth is None or max_depth == current_depth:
         try:
-            print(f"auto_split_upscale, current depth: {current_depth}")
+            print(f"auto_split_upscale depth: {current_depth}", end=" ", flush=True)
             result, _ = upscale_function(lr_img, scale)
+            print(f"progress: {current_tile}/{total_tiles}")
             return result, current_depth
         except RuntimeError as e:
             # Check to see if its actually the CUDA out of memory error
             if "CUDA" in str(e):
+                print("RuntimeError: CUDA out of memory...")
                 # Collect garbage (clear VRAM)
                 torch.cuda.empty_cache()
                 gc.collect()
@@ -60,68 +64,47 @@ def auto_split_upscale(
             torch.cuda.empty_cache()
             gc.collect()
 
-    h, w, c = lr_img.shape
+    input_h, input_w, input_c = lr_img.shape
+    
+    # Split the image into 4 quadrants with some overlap
+    top_left      = lr_img[: input_h // 2 + overlap, : input_w // 2 + overlap, :]
+    top_right     = lr_img[: input_h // 2 + overlap, input_w // 2 - overlap :, :]
+    bottom_left   = lr_img[input_h // 2 - overlap :, : input_w // 2 + overlap, :]
+    bottom_right  = lr_img[input_h // 2 - overlap :, input_w // 2 - overlap :, :]
+    current_depth = current_depth + 1
+    current_tile  = (current_tile - 1) * 4
+    total_tiles   = total_tiles * 4
 
-    # Split image into 4ths
-    top_left = lr_img[: h // 2 + overlap, : w // 2 + overlap, :]
-    top_right = lr_img[: h // 2 + overlap, w // 2 - overlap :, :]
-    bottom_left = lr_img[h // 2 - overlap :, : w // 2 + overlap, :]
-    bottom_right = lr_img[h // 2 - overlap :, w // 2 - overlap :, :]
-
-    # Recursively upscale the quadrants
+    # Recursively upscale each quadrant and track the current tile number
     # After we go through the top left quadrant, we know the maximum depth and no longer need to test for out-of-memory
     top_left_rlt, depth = auto_split_upscale(
-        top_left,
-        upscale_function,
-        scale=scale,
-        overlap=overlap,
-        max_depth=max_depth,
-        current_depth=current_depth + 1,
+        top_left, upscale_function, scale=scale, overlap=overlap, max_depth=max_depth,
+        current_depth=current_depth, current_tile=current_tile + 1, total_tiles=total_tiles,
     )
     top_right_rlt, _ = auto_split_upscale(
-        top_right,
-        upscale_function,
-        scale=scale,
-        overlap=overlap,
-        max_depth=depth,
-        current_depth=current_depth + 1,
+        top_right, upscale_function, scale=scale, overlap=overlap, max_depth=depth,
+        current_depth=current_depth, current_tile=current_tile + 2, total_tiles=total_tiles,
     )
     bottom_left_rlt, _ = auto_split_upscale(
-        bottom_left,
-        upscale_function,
-        scale=scale,
-        overlap=overlap,
-        max_depth=depth,
-        current_depth=current_depth + 1,
+        bottom_left, upscale_function, scale=scale, overlap=overlap, max_depth=depth,
+        current_depth=current_depth, current_tile=current_tile + 3, total_tiles=total_tiles,
     )
     bottom_right_rlt, _ = auto_split_upscale(
-        bottom_right,
-        upscale_function,
-        scale=scale,
-        overlap=overlap,
-        max_depth=depth,
-        current_depth=current_depth + 1,
+        bottom_right, upscale_function, scale=scale, overlap=overlap, max_depth=depth,
+        current_depth=current_depth, current_tile=current_tile + 4, total_tiles=total_tiles,
     )
+    
+    # Define the output image size
+    out_h = input_h * scale
+    out_w = input_w * scale
+    
+    # Create an empty output image
+    output_img = np.zeros((out_h, out_w, input_c), np.uint8)
 
-    # Define output shape
-    out_h = h * scale
-    out_w = w * scale
-
-    # Create blank output image
-    output_img = np.zeros((out_h, out_w, c), np.uint8)
-
-    # Fill output image with tiles, cropping out the overlaps
-    output_img[: out_h // 2, : out_w // 2, :] = top_left_rlt[
-        : out_h // 2, : out_w // 2, :
-    ]
-    output_img[: out_h // 2, -out_w // 2 :, :] = top_right_rlt[
-        : out_h // 2, -out_w // 2 :, :
-    ]
-    output_img[-out_h // 2 :, : out_w // 2, :] = bottom_left_rlt[
-        -out_h // 2 :, : out_w // 2, :
-    ]
-    output_img[-out_h // 2 :, -out_w // 2 :, :] = bottom_right_rlt[
-        -out_h // 2 :, -out_w // 2 :, :
-    ]
+    # Fill the output image with the upscaled quadrants, removing overlap regions
+    output_img[: out_h // 2, : out_w // 2, :]   = top_left_rlt[: out_h // 2, : out_w // 2, :]
+    output_img[: out_h // 2, -out_w // 2 :, :]  = top_right_rlt[: out_h // 2, -out_w // 2 :, :]
+    output_img[-out_h // 2 :, : out_w // 2, :]  = bottom_left_rlt[-out_h // 2 :, : out_w // 2, :]
+    output_img[-out_h // 2 :, -out_w // 2 :, :] = bottom_right_rlt[-out_h // 2 :, -out_w // 2 :, :]
 
     return output_img, depth
