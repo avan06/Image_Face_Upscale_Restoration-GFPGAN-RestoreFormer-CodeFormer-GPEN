@@ -8,11 +8,14 @@ import torch
 import traceback
 import math
 import time
+import ast
+import argparse
 from collections import defaultdict
 from facexlib.utils.misc import download_from_url
 from basicsr.utils.realesrganer import RealESRGANer
+from utils.dataops import auto_split_upscale
 
-
+input_images_limit = 5
 # Define URLs and their corresponding local storage paths
 face_models = {
     "GFPGANv1.4.pth"      : ["https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth",
@@ -457,399 +460,420 @@ typed_upscale_models = {get_model_type(key): value[0] for key, value in upscale_
 
 
 class Upscale:
-    def inference(self, img, face_restoration, upscale_model, scale: float, face_detection, face_detection_threshold: any, face_detection_only_center: bool, outputWithModelName: bool):
-        print(img)
-        print(face_restoration, upscale_model, scale)
+    def __init__(self,):
+        self.scale         = 4
+        self.modelInUse    = ""
+        self.realesrganer  = None
+        self.face_enhancer = None
+
+    def initBGUpscaleModel(self, upscale_model):
+        upscale_type, upscale_model = upscale_model.split(", ", 1)
+        download_from_url(upscale_models[upscale_model][0], upscale_model, os.path.join("weights", "upscale"))
+        self.modelInUse = f"_{os.path.splitext(upscale_model)[0]}"
+        netscale = 1 if any(sub in upscale_model.lower() for sub in ("x1", "1x")) else (2 if any(sub in upscale_model.lower() for sub in ("x2", "2x")) else 4)
+        model = None
+        half = True if torch.cuda.is_available() else False
+        if upscale_type:
+            # The values of the following hyperparameters are based on the research findings of the Spandrel project.
+            # https://github.com/chaiNNer-org/spandrel/tree/main/libs/spandrel/spandrel/architectures
+            from basicsr.archs.rrdbnet_arch import RRDBNet
+            loadnet = torch.load(os.path.join("weights", "upscale", upscale_model), map_location=torch.device('cpu'), weights_only=True)
+            if 'params_ema' in loadnet or 'params' in loadnet:
+                loadnet = loadnet['params_ema'] if 'params_ema' in loadnet else loadnet['params']
+
+            if upscale_type == "SRVGG":
+                from basicsr.archs.srvgg_arch import SRVGGNetCompact
+                body_max_num = self.find_max_numbers(loadnet, "body")
+                num_feat     = loadnet["body.0.weight"].shape[0]
+                num_in_ch    = loadnet["body.0.weight"].shape[1]
+                num_conv     = body_max_num // 2 - 1
+                model        = SRVGGNetCompact(num_in_ch=num_in_ch, num_out_ch=3, num_feat=num_feat, num_conv=num_conv, upscale=netscale, act_type='prelu')
+            elif upscale_type == "RRDB" or upscale_type == "ESRGAN":
+                if upscale_type == "RRDB":
+                    num_block = self.find_max_numbers(loadnet, "body") + 1
+                    num_feat  = loadnet["conv_first.weight"].shape[0]
+                else:
+                    num_block = self.find_max_numbers(loadnet, "model.1.sub")
+                    num_feat  = loadnet["model.0.weight"].shape[0]
+                model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=num_feat, num_block=num_block, num_grow_ch=32, scale=netscale, is_real_esrgan=upscale_type == "RRDB")
+            elif upscale_type == "DAT":
+                from basicsr.archs.dat_arch import DAT
+                half = False
+
+                in_chans   = loadnet["conv_first.weight"].shape[1]
+                embed_dim  = loadnet["conv_first.weight"].shape[0]
+                num_layers = self.find_max_numbers(loadnet, "layers") + 1
+                depth      = [6] * num_layers
+                num_heads  = [6] * num_layers
+                for i in range(num_layers):
+                    depth[i] = self.find_max_numbers(loadnet, f"layers.{i}.blocks") + 1
+                    num_heads[i] = loadnet[f"layers.{i}.blocks.1.attn.temperature"].shape[0] if depth[i] >= 2 else \
+                                   loadnet[f"layers.{i}.blocks.0.attn.attns.0.pos.pos3.2.weight"].shape[0] * 2
+
+                upsampler        = "pixelshuffle" if "conv_last.weight" in loadnet else "pixelshuffledirect"
+                resi_connection  = "1conv" if "conv_after_body.weight" in loadnet else "3conv"
+                qkv_bias         = "layers.0.blocks.0.attn.qkv.bias" in loadnet
+                expansion_factor = float(loadnet["layers.0.blocks.0.ffn.fc1.weight"].shape[0] / embed_dim)
+
+                img_size = 64
+                if "layers.0.blocks.2.attn.attn_mask_0" in loadnet:
+                    attn_mask_0_x, attn_mask_0_y, _attn_mask_0_z = loadnet["layers.0.blocks.2.attn.attn_mask_0"].shape
+                    img_size = int(math.sqrt(attn_mask_0_x * attn_mask_0_y))
+
+                split_size = [2, 4]
+                if "layers.0.blocks.0.attn.attns.0.rpe_biases" in loadnet:
+                    split_sizes = loadnet["layers.0.blocks.0.attn.attns.0.rpe_biases"][-1] + 1
+                    split_size = [int(x) for x in split_sizes]
+
+                model = DAT(img_size=img_size, in_chans=in_chans, embed_dim=embed_dim, split_size=split_size, depth=depth, num_heads=num_heads, expansion_factor=expansion_factor, 
+                            qkv_bias=qkv_bias, resi_connection=resi_connection, upsampler=upsampler, upscale=netscale)
+            elif upscale_type == "HAT":
+                half = False
+                from basicsr.archs.hat_arch import HAT
+                in_chans = loadnet["conv_first.weight"].shape[1]
+                embed_dim = loadnet["conv_first.weight"].shape[0]
+                window_size = int(math.sqrt(loadnet["relative_position_index_SA"].shape[0]))
+                num_layers = self.find_max_numbers(loadnet, "layers") + 1
+                depths      = [6] * num_layers
+                num_heads   = [6] * num_layers
+                for i in range(num_layers):
+                    depths[i] = self.find_max_numbers(loadnet, f"layers.{i}.residual_group.blocks") + 1
+                    num_heads[i] = loadnet[f"layers.{i}.residual_group.overlap_attn.relative_position_bias_table"].shape[1]
+                resi_connection = "1conv" if "conv_after_body.weight" in loadnet else "identity"
+
+                compress_ratio = self.find_divisor_for_quotient(embed_dim, loadnet["layers.0.residual_group.blocks.0.conv_block.cab.0.weight"].shape[0],)
+                squeeze_factor = self.find_divisor_for_quotient(embed_dim, loadnet["layers.0.residual_group.blocks.0.conv_block.cab.3.attention.1.weight"].shape[0],)
+
+                qkv_bias = "layers.0.residual_group.blocks.0.attn.qkv.bias" in loadnet
+                patch_norm = "patch_embed.norm.weight" in loadnet
+                ape = "absolute_pos_embed" in loadnet
+
+                mlp_hidden_dim = int(loadnet["layers.0.residual_group.blocks.0.mlp.fc1.weight"].shape[0])
+                mlp_ratio = mlp_hidden_dim / embed_dim
+                upsampler = "pixelshuffle"
+
+                model = HAT(img_size=64, patch_size=1, in_chans=in_chans, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, compress_ratio=compress_ratio,
+                            squeeze_factor=squeeze_factor, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape, patch_norm=patch_norm,
+                            upsampler=upsampler, resi_connection=resi_connection, upscale=netscale,)
+            elif "RealPLKSR" in upscale_type:
+                from basicsr.archs.realplksr_arch import realplksr
+                half = False if "RealPLSKR" in upscale_model else half
+                use_ea       = "feats.1.attn.f.0.weight" in loadnet
+                dim          = loadnet["feats.0.weight"].shape[0]
+                num_feats    = self.find_max_numbers(loadnet, "feats") + 1
+                n_blocks     = num_feats - 3
+                kernel_size  = loadnet["feats.1.lk.conv.weight"].shape[2]
+                split_ratio  = loadnet["feats.1.lk.conv.weight"].shape[0] / dim
+                use_dysample = "to_img.init_pos" in loadnet
+
+                model = realplksr(upscaling_factor=netscale, dim=dim, n_blocks=n_blocks, kernel_size=kernel_size, split_ratio=split_ratio, use_ea=use_ea, dysample=use_dysample)
+            elif upscale_type == "DRCT":
+                half = False
+                from basicsr.archs.DRCT_arch import DRCT
+
+                in_chans    = loadnet["conv_first.weight"].shape[1]
+                embed_dim   = loadnet["conv_first.weight"].shape[0]
+                num_layers  = self.find_max_numbers(loadnet, "layers") + 1
+                depths      = (6,) * num_layers
+                num_heads   = []
+                for i in range(num_layers):
+                    num_heads.append(loadnet[f"layers.{i}.swin1.attn.relative_position_bias_table"].shape[1])
+
+                mlp_ratio       = loadnet["layers.0.swin1.mlp.fc1.weight"].shape[0] / embed_dim
+                window_square   = loadnet["layers.0.swin1.attn.relative_position_bias_table"].shape[0]
+                window_size     = (math.isqrt(window_square) + 1) // 2
+                upsampler       = "pixelshuffle" if "conv_last.weight" in loadnet else ""
+                resi_connection = "1conv" if "conv_after_body.weight" in loadnet else ""
+                qkv_bias        = "layers.0.swin1.attn.qkv.bias" in loadnet
+                gc_adjust1      = loadnet["layers.0.adjust1.weight"].shape[0]
+                patch_norm      = "patch_embed.norm.weight" in loadnet
+                ape             = "absolute_pos_embed" in loadnet
+
+                model = DRCT(in_chans=in_chans,  img_size= 64, window_size=window_size, compress_ratio=3,squeeze_factor=30,
+                    conv_scale= 0.01, overlap_ratio= 0.5, img_range= 1., depths=depths, embed_dim=embed_dim, num_heads=num_heads, 
+                    mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape, patch_norm=patch_norm, use_checkpoint=False,
+                    upscale=netscale, upsampler=upsampler, resi_connection=resi_connection, gc =gc_adjust1,)
+            elif upscale_type == "ATD":
+                half = False
+                from basicsr.archs.atd_arch import ATD
+                in_chans    = loadnet["conv_first.weight"].shape[1]
+                embed_dim   = loadnet["conv_first.weight"].shape[0]
+                window_size = math.isqrt(loadnet["relative_position_index_SA"].shape[0])
+                num_layers  = self.find_max_numbers(loadnet, "layers") + 1
+                depths      = [6] * num_layers
+                num_heads   = [6] * num_layers
+                for i in range(num_layers):
+                    depths[i] = self.find_max_numbers(loadnet, f"layers.{i}.residual_group.layers") + 1
+                    num_heads[i] = loadnet[f"layers.{i}.residual_group.layers.0.attn_win.relative_position_bias_table"].shape[1]
+                num_tokens          = loadnet["layers.0.residual_group.layers.0.attn_atd.scale"].shape[0]
+                reducted_dim        = loadnet["layers.0.residual_group.layers.0.attn_atd.wq.weight"].shape[0]
+                convffn_kernel_size = loadnet["layers.0.residual_group.layers.0.convffn.dwconv.depthwise_conv.0.weight"].shape[2]
+                mlp_ratio           = (loadnet["layers.0.residual_group.layers.0.convffn.fc1.weight"].shape[0] / embed_dim)
+                qkv_bias            = "layers.0.residual_group.layers.0.wqkv.bias" in loadnet
+                ape                 = "absolute_pos_embed" in loadnet
+                patch_norm          = "patch_embed.norm.weight" in loadnet
+                resi_connection     = "1conv" if "layers.0.conv.weight" in loadnet else "3conv"
+
+                if "conv_up1.weight" in loadnet:
+                    upsampler = "nearest+conv"
+                elif "conv_before_upsample.0.weight" in loadnet:
+                    upsampler = "pixelshuffle"
+                elif "conv_last.weight" in loadnet:
+                    upsampler = ""
+                else:
+                    upsampler = "pixelshuffledirect"
+
+                is_light = upsampler == "pixelshuffledirect" and embed_dim == 48
+                category_size = 128 if is_light else 256
+
+                model = ATD(in_chans=in_chans, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, category_size=category_size,
+                            num_tokens=num_tokens, reducted_dim=reducted_dim, convffn_kernel_size=convffn_kernel_size, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape,
+                            patch_norm=patch_norm, use_checkpoint=False, upscale=netscale, upsampler=upsampler, resi_connection='1conv',)
+            elif upscale_type == "MoSR":
+                from basicsr.archs.mosr_arch import mosr
+                n_block         = self.find_max_numbers(loadnet, "gblocks") - 5
+                in_ch           = loadnet["gblocks.0.weight"].shape[1]
+                out_ch          = loadnet["upsampler.end_conv.weight"].shape[0] if "upsampler.init_pos" in loadnet else in_ch
+                dim             = loadnet["gblocks.0.weight"].shape[0]
+                expansion_ratio = (loadnet["gblocks.1.fc1.weight"].shape[0] / loadnet["gblocks.1.fc1.weight"].shape[1]) / 2
+                conv_ratio      = loadnet["gblocks.1.conv.weight"].shape[0] / dim
+                kernel_size     = loadnet["gblocks.1.conv.weight"].shape[2]
+                upsampler       = "dys" if "upsampler.init_pos" in loadnet else ("gps" if "upsampler.in_to_k.weight" in loadnet else "ps")
+
+                model = mosr(in_ch = in_ch, out_ch = out_ch, upscale = netscale, n_block = n_block, dim = dim,
+                            upsampler = upsampler, kernel_size = kernel_size, expansion_ratio = expansion_ratio, conv_ratio = conv_ratio,)
+            elif upscale_type == "SRFormer":
+                half = False
+                from basicsr.archs.srformer_arch import SRFormer
+                in_chans   = loadnet["conv_first.weight"].shape[1]
+                embed_dim  = loadnet["conv_first.weight"].shape[0]
+                ape        = "absolute_pos_embed" in loadnet
+                patch_norm = "patch_embed.norm.weight" in loadnet
+                qkv_bias   = "layers.0.residual_group.blocks.0.attn.q.bias" in loadnet
+                mlp_ratio  = float(loadnet["layers.0.residual_group.blocks.0.mlp.fc1.weight"].shape[0] / embed_dim)
+
+                num_layers = self.find_max_numbers(loadnet, "layers") + 1
+                depths     = [6] * num_layers
+                num_heads  = [6] * num_layers
+                for i in range(num_layers):
+                    depths[i] = self.find_max_numbers(loadnet, f"layers.{i}.residual_group.blocks") + 1
+                    num_heads[i] = loadnet[f"layers.{i}.residual_group.blocks.0.attn.relative_position_bias_table"].shape[1]
+
+                if "conv_hr.weight" in loadnet:
+                    upsampler = "nearest+conv"
+                elif "conv_before_upsample.0.weight" in loadnet:
+                    upsampler = "pixelshuffle"
+                elif "upsample.0.weight" in loadnet:
+                    upsampler = "pixelshuffledirect"
+                resi_connection = "1conv" if "conv_after_body.weight" in loadnet else "3conv"
+
+                window_size = int(math.sqrt(loadnet["layers.0.residual_group.blocks.0.attn.relative_position_bias_table"].shape[0])) + 1
+
+                if "layers.0.residual_group.blocks.1.attn_mask" in loadnet:
+                    attn_mask_0 = loadnet["layers.0.residual_group.blocks.1.attn_mask"].shape[0]
+                    patches_resolution = int(math.sqrt(attn_mask_0) * window_size)
+                else:
+                    patches_resolution = window_size
+                    if ape:
+                        pos_embed_value = loadnet.get("absolute_pos_embed", [None, None])[1]
+                        if pos_embed_value:
+                            patches_resolution = int(math.sqrt(pos_embed_value))
+
+                img_size = patches_resolution
+                if img_size % window_size != 0:
+                    for nice_number in [512, 256, 128, 96, 64, 48, 32, 24, 16]:
+                        if nice_number % window_size != 0:
+                            nice_number += window_size - (nice_number % window_size)
+                        if nice_number == patches_resolution:
+                            img_size = nice_number
+                            break
+
+                model = SRFormer(img_size=img_size, in_chans=in_chans, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, mlp_ratio=mlp_ratio, 
+                             qkv_bias=qkv_bias, qk_scale=None, ape=ape, patch_norm=patch_norm, upscale=netscale, upsampler=upsampler, resi_connection=resi_connection,)
+
+        if model:
+            self.realesrganer = RealESRGANer(scale=netscale, model_path=os.path.join("weights", "upscale", upscale_model), model=model, tile=0, tile_pad=10, pre_pad=0, half=half)
+        elif upscale_model:
+            import PIL
+            from image_gen_aux import UpscaleWithModel
+            class UpscaleWithModel_Gfpgan(UpscaleWithModel):
+                def cv2pil(self, image):
+                    ''' OpenCV type -> PIL type
+                    https://qiita.com/derodero24/items/f22c22b22451609908ee
+                    '''
+                    new_image = image.copy()
+                    if new_image.ndim == 2:  # Grayscale
+                        pass
+                    elif new_image.shape[2] == 3:  # Color
+                        new_image = cv2.cvtColor(new_image, cv2.COLOR_BGR2RGB)
+                    elif new_image.shape[2] == 4:  # Transparency
+                        new_image = cv2.cvtColor(new_image, cv2.COLOR_BGRA2RGBA)
+                    new_image = PIL.Image.fromarray(new_image)
+                    return new_image
+
+                def pil2cv(self, image):
+                    ''' PIL type -> OpenCV type
+                    https://qiita.com/derodero24/items/f22c22b22451609908ee
+                    '''
+                    new_image = np.array(image, dtype=np.uint8)
+                    if new_image.ndim == 2:  # Grayscale
+                        pass
+                    elif new_image.shape[2] == 3:  # Color
+                        new_image = cv2.cvtColor(new_image, cv2.COLOR_RGB2BGR)
+                    elif new_image.shape[2] == 4:  # Transparency
+                        new_image = cv2.cvtColor(new_image, cv2.COLOR_RGBA2BGRA)
+                    return new_image
+
+                def enhance(self, img, outscale=None):
+                    # img: numpy
+                    h_input, w_input = img.shape[0:2]
+                    pil_img = self.cv2pil(img)
+                    pil_img = self.__call__(pil_img)
+                    cv_image = self.pil2cv(pil_img)
+                    if outscale is not None and outscale != float(netscale):
+                        interpolation = cv2.INTER_AREA if outscale < float(netscale) else cv2.INTER_LANCZOS4
+                        cv_image = cv2.resize(
+                            cv_image, (
+                                int(w_input * outscale),
+                                int(h_input * outscale),
+                            ), interpolation=interpolation)
+                    return cv_image, None
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            upscaler = UpscaleWithModel.from_pretrained(os.path.join("weights", "upscale", upscale_model)).to(device)
+            upscaler.__class__ = UpscaleWithModel_Gfpgan
+            self.realesrganer = upscaler
+
+
+    def initFaceEnhancerModel(self, face_restoration, face_detection, face_detection_threshold: any, face_detection_only_center: bool):
+        download_from_url(face_models[face_restoration][0], face_restoration, os.path.join("weights", "face"))
+        
+        resolution = 512
+        self.modelInUse = f"_{os.path.splitext(face_restoration)[0]}" + self.modelInUse
+        from gfpgan.utils import GFPGANer
+        model_rootpath = os.path.join("weights", "face")
+        model_path = os.path.join(model_rootpath, face_restoration)
+        channel_multiplier = None
+        
+        if face_restoration and face_restoration.startswith("GFPGANv1."):
+            arch = "clean"
+            channel_multiplier = 2
+        elif face_restoration and face_restoration.startswith("RestoreFormer"):
+            arch = "RestoreFormer++" if face_restoration.startswith("RestoreFormer++") else "RestoreFormer"
+        elif face_restoration == 'CodeFormer.pth':
+            arch = "CodeFormer"
+        elif face_restoration.startswith("GPEN-BFR-"):
+            arch = "GPEN"
+            channel_multiplier = 2
+            if "1024" in face_restoration:
+                arch = "GPEN-1024"
+                resolution = 1024
+            elif "2048" in face_restoration:
+                arch = "GPEN-2048"
+                resolution = 2048
+        
+        self.face_enhancer = GFPGANer(model_path=model_path, upscale=self.scale, arch=arch, channel_multiplier=channel_multiplier, model_rootpath=model_rootpath, det_model=face_detection, resolution=resolution)
+
+
+    def inference(self, gallery, face_restoration, upscale_model, scale: float, face_detection, face_detection_threshold: any, face_detection_only_center: bool, outputWithModelName: bool):
         try:
-            if not img or (not face_restoration and not upscale_model):
+            if not gallery or (not face_restoration and not upscale_model):
                 raise ValueError("Invalid parameter setting")
+            
+            print(face_restoration, upscale_model, scale, f"gallery length: {len(gallery)}")
 
             timer = Timer()  # Create a timer
             self.scale = scale
-            self.img_name = os.path.basename(str(img))
-            self.basename, self.extension = os.path.splitext(self.img_name)
-            
-            img = cv2.imdecode(np.fromfile(img, np.uint8), cv2.IMREAD_UNCHANGED) # numpy.ndarray
-            
-            self.img_mode = "RGBA" if len(img.shape) == 3 and img.shape[2] == 4 else None
-            if len(img.shape) == 2:  # for gray inputs
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-            self.h_input, self.w_input = img.shape[0:2]
-            self.realesrganer = None
-
-            modelInUse = ""
-            upscale_type = None
-            is_auto_split_upscale = True
             if upscale_model:
-                upscale_type, upscale_model = upscale_model.split(", ", 1)
-                download_from_url(upscale_models[upscale_model][0], upscale_model, os.path.join("weights", "upscale"))
-                modelInUse = f"_{os.path.splitext(upscale_model)[0]}"
-            
-                self.netscale = 1 if any(sub in upscale_model.lower() for sub in ("x1", "1x")) else (2 if any(sub in upscale_model.lower() for sub in ("x2", "2x")) else 4)
-                model = None
-                half = True if torch.cuda.is_available() else False
-                if upscale_type:
-                    # The values of the following hyperparameters are based on the research findings of the Spandrel project.
-                    # https://github.com/chaiNNer-org/spandrel/tree/main/libs/spandrel/spandrel/architectures
-                    from basicsr.archs.rrdbnet_arch import RRDBNet
-                    loadnet = torch.load(os.path.join("weights", "upscale", upscale_model), map_location=torch.device('cpu'), weights_only=True)
-                    if 'params_ema' in loadnet or 'params' in loadnet:
-                        loadnet = loadnet['params_ema'] if 'params_ema' in loadnet else loadnet['params']
-
-                    if upscale_type == "SRVGG":
-                        from basicsr.archs.srvgg_arch import SRVGGNetCompact
-                        body_max_num = self.find_max_numbers(loadnet, "body")
-                        num_feat     = loadnet["body.0.weight"].shape[0]
-                        num_in_ch    = loadnet["body.0.weight"].shape[1]
-                        num_conv     = body_max_num // 2 - 1
-                        model        = SRVGGNetCompact(num_in_ch=num_in_ch, num_out_ch=3, num_feat=num_feat, num_conv=num_conv, upscale=self.netscale, act_type='prelu')
-                    elif upscale_type == "RRDB" or upscale_type == "ESRGAN":
-                        if upscale_type == "RRDB":
-                            num_block = self.find_max_numbers(loadnet, "body") + 1
-                            num_feat  = loadnet["conv_first.weight"].shape[0]
-                        else:
-                            num_block = self.find_max_numbers(loadnet, "model.1.sub")
-                            num_feat  = loadnet["model.0.weight"].shape[0]
-                        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=num_feat, num_block=num_block, num_grow_ch=32, scale=self.netscale, is_real_esrgan=upscale_type == "RRDB")
-                    elif upscale_type == "DAT":
-                        from basicsr.archs.dat_arch import DAT
-                        half = False
-
-                        in_chans   = loadnet["conv_first.weight"].shape[1]
-                        embed_dim  = loadnet["conv_first.weight"].shape[0]
-                        num_layers = self.find_max_numbers(loadnet, "layers") + 1
-                        depth      = [6] * num_layers
-                        num_heads  = [6] * num_layers
-                        for i in range(num_layers):
-                            depth[i] = self.find_max_numbers(loadnet, f"layers.{i}.blocks") + 1
-                            num_heads[i] = loadnet[f"layers.{i}.blocks.1.attn.temperature"].shape[0] if depth[i] >= 2 else \
-                                           loadnet[f"layers.{i}.blocks.0.attn.attns.0.pos.pos3.2.weight"].shape[0] * 2
-
-                        upsampler        = "pixelshuffle" if "conv_last.weight" in loadnet else "pixelshuffledirect"
-                        resi_connection  = "1conv" if "conv_after_body.weight" in loadnet else "3conv"
-                        qkv_bias         = "layers.0.blocks.0.attn.qkv.bias" in loadnet
-                        expansion_factor = float(loadnet["layers.0.blocks.0.ffn.fc1.weight"].shape[0] / embed_dim)
-
-                        img_size = 64
-                        if "layers.0.blocks.2.attn.attn_mask_0" in loadnet:
-                            attn_mask_0_x, attn_mask_0_y, _attn_mask_0_z = loadnet["layers.0.blocks.2.attn.attn_mask_0"].shape
-                            img_size = int(math.sqrt(attn_mask_0_x * attn_mask_0_y))
-
-                        split_size = [2, 4]
-                        if "layers.0.blocks.0.attn.attns.0.rpe_biases" in loadnet:
-                            split_sizes = loadnet["layers.0.blocks.0.attn.attns.0.rpe_biases"][-1] + 1
-                            split_size = [int(x) for x in split_sizes]
-
-                        model = DAT(img_size=img_size, in_chans=in_chans, embed_dim=embed_dim, split_size=split_size, depth=depth, num_heads=num_heads, expansion_factor=expansion_factor, 
-                                    qkv_bias=qkv_bias, resi_connection=resi_connection, upsampler=upsampler, upscale=self.netscale)
-                    elif upscale_type == "HAT":
-                        half = False
-                        from basicsr.archs.hat_arch import HAT
-                        in_chans = loadnet["conv_first.weight"].shape[1]
-                        embed_dim = loadnet["conv_first.weight"].shape[0]
-                        window_size = int(math.sqrt(loadnet["relative_position_index_SA"].shape[0]))
-                        num_layers = self.find_max_numbers(loadnet, "layers") + 1
-                        depths      = [6] * num_layers
-                        num_heads   = [6] * num_layers
-                        for i in range(num_layers):
-                            depths[i] = self.find_max_numbers(loadnet, f"layers.{i}.residual_group.blocks") + 1
-                            num_heads[i] = loadnet[f"layers.{i}.residual_group.overlap_attn.relative_position_bias_table"].shape[1]
-                        resi_connection = "1conv" if "conv_after_body.weight" in loadnet else "identity"
-
-                        compress_ratio = self.find_divisor_for_quotient(embed_dim, loadnet["layers.0.residual_group.blocks.0.conv_block.cab.0.weight"].shape[0],)
-                        squeeze_factor = self.find_divisor_for_quotient(embed_dim, loadnet["layers.0.residual_group.blocks.0.conv_block.cab.3.attention.1.weight"].shape[0],)
-
-                        qkv_bias = "layers.0.residual_group.blocks.0.attn.qkv.bias" in loadnet
-                        patch_norm = "patch_embed.norm.weight" in loadnet
-                        ape = "absolute_pos_embed" in loadnet
-
-                        mlp_hidden_dim = int(loadnet["layers.0.residual_group.blocks.0.mlp.fc1.weight"].shape[0])
-                        mlp_ratio = mlp_hidden_dim / embed_dim
-                        upsampler = "pixelshuffle"
-
-                        model = HAT(img_size=64, patch_size=1, in_chans=in_chans, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, compress_ratio=compress_ratio,
-                                    squeeze_factor=squeeze_factor, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape, patch_norm=patch_norm,
-                                    upsampler=upsampler, resi_connection=resi_connection, upscale=self.netscale,)
-                    elif "RealPLKSR" in upscale_type:
-                        from basicsr.archs.realplksr_arch import realplksr
-                        half = False if "RealPLSKR" in upscale_model else half
-                        use_ea       = "feats.1.attn.f.0.weight" in loadnet
-                        dim          = loadnet["feats.0.weight"].shape[0]
-                        num_feats    = self.find_max_numbers(loadnet, "feats") + 1
-                        n_blocks     = num_feats - 3
-                        kernel_size  = loadnet["feats.1.lk.conv.weight"].shape[2]
-                        split_ratio  = loadnet["feats.1.lk.conv.weight"].shape[0] / dim
-                        use_dysample = "to_img.init_pos" in loadnet
-
-                        model = realplksr(upscaling_factor=self.netscale, dim=dim, n_blocks=n_blocks, kernel_size=kernel_size, split_ratio=split_ratio, use_ea=use_ea, dysample=use_dysample)
-                    elif upscale_type == "DRCT":
-                        half = False
-                        from basicsr.archs.DRCT_arch import DRCT
-
-                        in_chans    = loadnet["conv_first.weight"].shape[1]
-                        embed_dim   = loadnet["conv_first.weight"].shape[0]
-                        num_layers  = self.find_max_numbers(loadnet, "layers") + 1
-                        depths      = (6,) * num_layers
-                        num_heads   = []
-                        for i in range(num_layers):
-                            num_heads.append(loadnet[f"layers.{i}.swin1.attn.relative_position_bias_table"].shape[1])
-
-                        mlp_ratio       = loadnet["layers.0.swin1.mlp.fc1.weight"].shape[0] / embed_dim
-                        window_square   = loadnet["layers.0.swin1.attn.relative_position_bias_table"].shape[0]
-                        window_size     = (math.isqrt(window_square) + 1) // 2
-                        upsampler       = "pixelshuffle" if "conv_last.weight" in loadnet else ""
-                        resi_connection = "1conv" if "conv_after_body.weight" in loadnet else ""
-                        qkv_bias        = "layers.0.swin1.attn.qkv.bias" in loadnet
-                        gc_adjust1      = loadnet["layers.0.adjust1.weight"].shape[0]
-                        patch_norm      = "patch_embed.norm.weight" in loadnet
-                        ape             = "absolute_pos_embed" in loadnet
-
-                        model = DRCT(in_chans=in_chans,  img_size= 64, window_size=window_size, compress_ratio=3,squeeze_factor=30,
-                            conv_scale= 0.01, overlap_ratio= 0.5, img_range= 1., depths=depths, embed_dim=embed_dim, num_heads=num_heads, 
-                            mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape, patch_norm=patch_norm, use_checkpoint=False,
-                            upscale=self.netscale, upsampler=upsampler, resi_connection=resi_connection, gc =gc_adjust1,)
-                    elif upscale_type == "ATD":
-                        half = False
-                        from basicsr.archs.atd_arch import ATD
-                        in_chans    = loadnet["conv_first.weight"].shape[1]
-                        embed_dim   = loadnet["conv_first.weight"].shape[0]
-                        window_size = math.isqrt(loadnet["relative_position_index_SA"].shape[0])
-                        num_layers  = self.find_max_numbers(loadnet, "layers") + 1
-                        depths      = [6] * num_layers
-                        num_heads   = [6] * num_layers
-                        for i in range(num_layers):
-                            depths[i] = self.find_max_numbers(loadnet, f"layers.{i}.residual_group.layers") + 1
-                            num_heads[i] = loadnet[f"layers.{i}.residual_group.layers.0.attn_win.relative_position_bias_table"].shape[1]
-                        num_tokens          = loadnet["layers.0.residual_group.layers.0.attn_atd.scale"].shape[0]
-                        reducted_dim        = loadnet["layers.0.residual_group.layers.0.attn_atd.wq.weight"].shape[0]
-                        convffn_kernel_size = loadnet["layers.0.residual_group.layers.0.convffn.dwconv.depthwise_conv.0.weight"].shape[2]
-                        mlp_ratio           = (loadnet["layers.0.residual_group.layers.0.convffn.fc1.weight"].shape[0] / embed_dim)
-                        qkv_bias            = "layers.0.residual_group.layers.0.wqkv.bias" in loadnet
-                        ape                 = "absolute_pos_embed" in loadnet
-                        patch_norm          = "patch_embed.norm.weight" in loadnet
-                        resi_connection     = "1conv" if "layers.0.conv.weight" in loadnet else "3conv"
-
-                        if "conv_up1.weight" in loadnet:
-                            upsampler = "nearest+conv"
-                        elif "conv_before_upsample.0.weight" in loadnet:
-                            upsampler = "pixelshuffle"
-                        elif "conv_last.weight" in loadnet:
-                            upsampler = ""
-                        else:
-                            upsampler = "pixelshuffledirect"
-
-                        is_light = upsampler == "pixelshuffledirect" and embed_dim == 48
-                        category_size = 128 if is_light else 256
-
-                        model = ATD(in_chans=in_chans, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, category_size=category_size,
-                                    num_tokens=num_tokens, reducted_dim=reducted_dim, convffn_kernel_size=convffn_kernel_size, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape,
-                                    patch_norm=patch_norm, use_checkpoint=False, upscale=self.netscale, upsampler=upsampler, resi_connection='1conv',)
-                    elif upscale_type == "MoSR":
-                        from basicsr.archs.mosr_arch import mosr
-                        n_block         = self.find_max_numbers(loadnet, "gblocks") - 5
-                        in_ch           = loadnet["gblocks.0.weight"].shape[1]
-                        out_ch          = loadnet["upsampler.end_conv.weight"].shape[0] if "upsampler.init_pos" in loadnet else in_ch
-                        dim             = loadnet["gblocks.0.weight"].shape[0]
-                        expansion_ratio = (loadnet["gblocks.1.fc1.weight"].shape[0] / loadnet["gblocks.1.fc1.weight"].shape[1]) / 2
-                        conv_ratio      = loadnet["gblocks.1.conv.weight"].shape[0] / dim
-                        kernel_size     = loadnet["gblocks.1.conv.weight"].shape[2]
-                        upsampler       = "dys" if "upsampler.init_pos" in loadnet else ("gps" if "upsampler.in_to_k.weight" in loadnet else "ps")
-
-                        model = mosr(in_ch = in_ch, out_ch = out_ch, upscale = self.netscale, n_block = n_block, dim = dim,
-                                    upsampler = upsampler, kernel_size = kernel_size, expansion_ratio = expansion_ratio, conv_ratio = conv_ratio,)
-                    elif upscale_type == "SRFormer":
-                        half = False
-                        from basicsr.archs.srformer_arch import SRFormer
-                        in_chans   = loadnet["conv_first.weight"].shape[1]
-                        embed_dim  = loadnet["conv_first.weight"].shape[0]
-                        ape        = "absolute_pos_embed" in loadnet
-                        patch_norm = "patch_embed.norm.weight" in loadnet
-                        qkv_bias   = "layers.0.residual_group.blocks.0.attn.q.bias" in loadnet
-                        mlp_ratio  = float(loadnet["layers.0.residual_group.blocks.0.mlp.fc1.weight"].shape[0] / embed_dim)
-
-                        num_layers = self.find_max_numbers(loadnet, "layers") + 1
-                        depths     = [6] * num_layers
-                        num_heads  = [6] * num_layers
-                        for i in range(num_layers):
-                            depths[i] = self.find_max_numbers(loadnet, f"layers.{i}.residual_group.blocks") + 1
-                            num_heads[i] = loadnet[f"layers.{i}.residual_group.blocks.0.attn.relative_position_bias_table"].shape[1]
-
-                        if "conv_hr.weight" in loadnet:
-                            upsampler = "nearest+conv"
-                        elif "conv_before_upsample.0.weight" in loadnet:
-                            upsampler = "pixelshuffle"
-                        elif "upsample.0.weight" in loadnet:
-                            upsampler = "pixelshuffledirect"
-                        resi_connection = "1conv" if "conv_after_body.weight" in loadnet else "3conv"
-
-                        window_size = int(math.sqrt(loadnet["layers.0.residual_group.blocks.0.attn.relative_position_bias_table"].shape[0])) + 1
-
-                        if "layers.0.residual_group.blocks.1.attn_mask" in loadnet:
-                            attn_mask_0 = loadnet["layers.0.residual_group.blocks.1.attn_mask"].shape[0]
-                            patches_resolution = int(math.sqrt(attn_mask_0) * window_size)
-                        else:
-                            patches_resolution = window_size
-                            if ape:
-                                pos_embed_value = loadnet.get("absolute_pos_embed", [None, None])[1]
-                                if pos_embed_value:
-                                    patches_resolution = int(math.sqrt(pos_embed_value))
-
-                        img_size = patches_resolution
-                        if img_size % window_size != 0:
-                            for nice_number in [512, 256, 128, 96, 64, 48, 32, 24, 16]:
-                                if nice_number % window_size != 0:
-                                    nice_number += window_size - (nice_number % window_size)
-                                if nice_number == patches_resolution:
-                                    img_size = nice_number
-                                    break
-
-                        model = SRFormer(img_size=img_size, in_chans=in_chans, embed_dim=embed_dim, depths=depths, num_heads=num_heads, window_size=window_size, mlp_ratio=mlp_ratio, 
-                                     qkv_bias=qkv_bias, qk_scale=None, ape=ape, patch_norm=patch_norm, upscale=self.netscale, upsampler=upsampler, resi_connection=resi_connection,)
-
-                if model:
-                    self.realesrganer = RealESRGANer(scale=self.netscale, model_path=os.path.join("weights", "upscale", upscale_model), model=model, tile=0, tile_pad=10, pre_pad=0, half=half)
-                elif upscale_model:
-                    import PIL
-                    from image_gen_aux import UpscaleWithModel
-                    class UpscaleWithModel_Gfpgan(UpscaleWithModel):
-                        def cv2pil(self, image):
-                            ''' OpenCV type -> PIL type
-                            https://qiita.com/derodero24/items/f22c22b22451609908ee
-                            '''
-                            new_image = image.copy()
-                            if new_image.ndim == 2:  # Grayscale
-                                pass
-                            elif new_image.shape[2] == 3:  # Color
-                                new_image = cv2.cvtColor(new_image, cv2.COLOR_BGR2RGB)
-                            elif new_image.shape[2] == 4:  # Transparency
-                                new_image = cv2.cvtColor(new_image, cv2.COLOR_BGRA2RGBA)
-                            new_image = PIL.Image.fromarray(new_image)
-                            return new_image
-
-                        def pil2cv(self, image):
-                            ''' PIL type -> OpenCV type
-                            https://qiita.com/derodero24/items/f22c22b22451609908ee
-                            '''
-                            new_image = np.array(image, dtype=np.uint8)
-                            if new_image.ndim == 2:  # Grayscale
-                                pass
-                            elif new_image.shape[2] == 3:  # Color
-                                new_image = cv2.cvtColor(new_image, cv2.COLOR_RGB2BGR)
-                            elif new_image.shape[2] == 4:  # Transparency
-                                new_image = cv2.cvtColor(new_image, cv2.COLOR_RGBA2BGRA)
-                            return new_image
-
-                        def enhance(self_, img, outscale=None):
-                            # img: numpy
-                            h_input, w_input = img.shape[0:2]
-                            pil_img = self_.cv2pil(img)
-                            pil_img = self_.__call__(pil_img)
-                            cv_image = self_.pil2cv(pil_img)
-                            if outscale is not None and outscale != float(self.netscale):
-                                interpolation = cv2.INTER_AREA if outscale < float(self.netscale) else cv2.INTER_LANCZOS4
-                                cv_image = cv2.resize(
-                                    cv_image, (
-                                        int(w_input * outscale),
-                                        int(h_input * outscale),
-                                    ), interpolation=interpolation)
-                            return cv_image, None
-
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                    upscaler = UpscaleWithModel.from_pretrained(os.path.join("weights", "upscale", upscale_model)).to(device)
-                    upscaler.__class__ = UpscaleWithModel_Gfpgan
-                    self.realesrganer = upscaler
+                self.initBGUpscaleModel(upscale_model)
                 timer.checkpoint("Initialize BG upscale model")
 
-            self.face_enhancer = None
-
             if face_restoration:
-                download_from_url(face_models[face_restoration][0], face_restoration, os.path.join("weights", "face"))
-                
-                resolution = 512
-                modelInUse = f"_{os.path.splitext(face_restoration)[0]}" + modelInUse
-                from gfpgan.utils import GFPGANer
-                model_rootpath = os.path.join("weights", "face")
-                model_path = os.path.join(model_rootpath, face_restoration)
-                channel_multiplier = None
-
-                if face_restoration and face_restoration.startswith("GFPGANv1."):
-                    arch = "clean"
-                    channel_multiplier = 2
-                elif face_restoration and face_restoration.startswith("RestoreFormer"):
-                    arch = "RestoreFormer++" if face_restoration.startswith("RestoreFormer++") else "RestoreFormer"
-                elif face_restoration == 'CodeFormer.pth':
-                    arch = "CodeFormer"
-                elif face_restoration.startswith("GPEN-BFR-"):
-                    arch = "GPEN"
-                    channel_multiplier = 2
-                    if "1024" in face_restoration:
-                        arch = "GPEN-1024"
-                        resolution = 1024
-                    elif "2048" in face_restoration:
-                        arch = "GPEN-2048"
-                        resolution = 2048
-
-                self.face_enhancer = GFPGANer(model_path=model_path, upscale=self.scale, arch=arch, channel_multiplier=channel_multiplier, model_rootpath=model_rootpath, det_model=face_detection, resolution=resolution)
+                self.initFaceEnhancerModel(face_restoration, face_detection, face_detection_threshold, face_detection_only_center)
                 timer.checkpoint("Initialize face enhancer model")
 
-            files = []
+            timer.report()
+
             if not outputWithModelName:
-                modelInUse = ""
+                self.modelInUse = ""
+                
+            files = []
+            is_auto_split_upscale = True
+            # Dictionary to track counters for each filename
+            name_counters = defaultdict(int)
+            for gallery_idx, value in enumerate(gallery):
+                try:
+                    img_path = str(value[0])
+                    img_name = os.path.basename(img_path)
+                    # Increment the counter for the current name
+                    name_counters[img_name] += 1
+                    if name_counters[img_name] > 1:
+                        img_name = f"{img_name}_{name_counters[img_name]:02d}"
+                    basename, extension = os.path.splitext(img_name)
+                    
+                    img_cv2 = cv2.imdecode(np.fromfile(img_path, np.uint8), cv2.IMREAD_UNCHANGED) # numpy.ndarray
+            
+                    img_mode = "RGBA" if len(img_cv2.shape) == 3 and img_cv2.shape[2] == 4 else None
+                    if len(img_cv2.shape) == 2:  # for gray inputs
+                        img_cv2 = cv2.cvtColor(img_cv2, cv2.COLOR_GRAY2BGR)
+                    print(f"> image{gallery_idx:02d}, {img_cv2.shape}:")
 
-            try:
-                bg_upsample_img = None
-                if self.realesrganer and hasattr(self.realesrganer, "enhance"):
-                    from utils.dataops import auto_split_upscale
-                    bg_upsample_img, _ = auto_split_upscale(img, self.realesrganer.enhance, self.scale) if is_auto_split_upscale else self.realesrganer.enhance(img, outscale=self.scale)
-                    timer.checkpoint("Background upscale Section")
+                    bg_upsample_img = None
+                    if self.realesrganer and hasattr(self.realesrganer, "enhance"):
+                        bg_upsample_img, _ = auto_split_upscale(img_cv2, self.realesrganer.enhance, self.scale) if is_auto_split_upscale else self.realesrganer.enhance(img_cv2, outscale=self.scale)
+                        timer.checkpoint(f"image{gallery_idx:02d}, Background upscale Section")
+                    
+                    if self.face_enhancer:
+                        cropped_faces, restored_aligned, bg_upsample_img = self.face_enhancer.enhance(img_cv2, has_aligned=False, only_center_face=face_detection_only_center, paste_back=True, bg_upsample_img=bg_upsample_img, eye_dist_threshold=face_detection_threshold)
+                        # save faces
+                        if cropped_faces and restored_aligned:
+                            for idx, (cropped_face, restored_face) in enumerate(zip(cropped_faces, restored_aligned)):
+                                # save cropped face
+                                save_crop_path = f"output/{basename}{idx:02d}_cropped_faces{self.modelInUse}.png"
+                                self.imwriteUTF8(save_crop_path, cropped_face)
+                                # save restored face
+                                save_restore_path = f"output/{basename}{idx:02d}_restored_faces{self.modelInUse}.png"
+                                self.imwriteUTF8(save_restore_path, restored_face)
+                                # save comparison image
+                                save_cmp_path = f"output/{basename}{idx:02d}_cmp{self.modelInUse}.png"
+                                cmp_img = np.concatenate((cropped_face, restored_face), axis=1)
+                                self.imwriteUTF8(save_cmp_path, cmp_img)
+                    
+                                files.append(save_crop_path)
+                                files.append(save_restore_path)
+                                files.append(save_cmp_path)
+                        timer.checkpoint(f"image{gallery_idx:02d}, Face enhancer Section")
+                    
+                    restored_img = bg_upsample_img
+                    timer.report()
 
-                if self.face_enhancer:
-                    cropped_faces, restored_aligned, bg_upsample_img = self.face_enhancer.enhance(img, has_aligned=False, only_center_face=face_detection_only_center, paste_back=True, bg_upsample_img=bg_upsample_img, eye_dist_threshold=face_detection_threshold)
-                    # save faces
-                    if cropped_faces and restored_aligned:
-                        for idx, (cropped_face, restored_face) in enumerate(zip(cropped_faces, restored_aligned)):
-                            # save cropped face
-                            save_crop_path = f"output/{self.basename}{idx:02d}_cropped_faces{modelInUse}.png"
-                            self.imwriteUTF8(save_crop_path, cropped_face)
-                            # save restored face
-                            save_restore_path = f"output/{self.basename}{idx:02d}_restored_faces{modelInUse}.png"
-                            self.imwriteUTF8(save_restore_path, restored_face)
-                            # save comparison image
-                            save_cmp_path = f"output/{self.basename}{idx:02d}_cmp{modelInUse}.png"
-                            cmp_img = np.concatenate((cropped_face, restored_face), axis=1)
-                            self.imwriteUTF8(save_cmp_path, cmp_img)
-        
-                            files.append(save_crop_path)
-                            files.append(save_restore_path)
-                            files.append(save_cmp_path)
-                    timer.checkpoint("Face enhancer Section")
+                    if not extension:
+                        extension = ".png" if img_mode == "RGBA" else ".jpg" # RGBA images should be saved in png format
+                    save_path = f"output/{basename}{self.modelInUse}{extension}"
+                    self.imwriteUTF8(save_path, restored_img)
 
-                restored_img = bg_upsample_img
-            except RuntimeError as error:
-                print(traceback.format_exc())
-                print('Error', error)
-            finally:
-                if self.face_enhancer:
-                    self.face_enhancer._cleanup()
-                else:
-                    # Free GPU memory and clean up resources
-                    torch.cuda.empty_cache()
-                    gc.collect()
-
-            if not self.extension:
-                self.extension = ".png" if self.img_mode == "RGBA" else ".jpg" # RGBA images should be saved in png format
-            save_path = f"output/{self.basename}{modelInUse}{self.extension}"
-            self.imwriteUTF8(save_path, restored_img)
-
-            restored_img = cv2.cvtColor(restored_img, cv2.COLOR_BGR2RGB)
-            files.append(save_path)
-            timer.report()  # Print all recorded times
-            return files, files
+                    restored_img = cv2.cvtColor(restored_img, cv2.COLOR_BGR2RGB)
+                    files.append(save_path)
+                except RuntimeError as error:
+                    print(traceback.format_exc())
+                    print('Error', error)
+                    
+            timer.report_all()  # Print all recorded times
         except Exception as error:
             print(traceback.format_exc())
             print("global exception: ", error)
             return None, None
+        finally:
+            if self.face_enhancer:
+                self.face_enhancer._cleanup()
+            else:
+                # Free GPU memory and clean up resources
+                torch.cuda.empty_cache()
+                gc.collect()
+
+        return files, files
+
 
     def find_max_numbers(self, state_dict, findkeys):
         if isinstance(findkeys, str):
@@ -914,12 +938,26 @@ class Timer:
         now = time.perf_counter()
         self.checkpoints.append((label, now))
 
-    def report(self):
+    def report(self, is_clear_checkpoints = True):
+        # Determine the max label width for alignment
+        max_label_length = max(len(label) for label, _ in self.checkpoints)
+
+        prev_time = self.checkpoints[0][1]
+        for label, curr_time in self.checkpoints[1:]:
+            elapsed = curr_time - prev_time
+            print(f"{label.ljust(max_label_length)}: {elapsed:.3f} seconds")
+            prev_time = curr_time
+        
+        if is_clear_checkpoints:
+            self.checkpoints.clear()
+            self.checkpoint()  # Store checkpoints
+
+    def report_all(self):
         """Print all recorded checkpoints and total execution time with aligned formatting."""
         print("\n> Execution Time Report:")
 
         # Determine the max label width for alignment
-        max_label_length = max(len(label) for label, _ in self.checkpoints)
+        max_label_length = max(len(label) for label, _ in self.checkpoints) if len(self.checkpoints) > 0 else 0
 
         prev_time = self.start_time
         for label, curr_time in self.checkpoints[1:]:
@@ -929,6 +967,112 @@ class Timer:
         
         total_time = self.checkpoints[-1][1] - self.start_time
         print(f"{'Total Execution Time'.ljust(max_label_length)}: {total_time:.3f} seconds\n")
+
+        self.checkpoints.clear()
+
+    def restart(self):
+        self.start_time  = time.perf_counter()  # Record the start time
+        self.checkpoints = [("Start", self.start_time)]  # Store checkpoints
+
+
+def get_selection_from_gallery(selected_state: gr.SelectData):
+    """
+    Extracts the selected image path and caption from the gallery selection state.
+
+    Args:
+        selected_state (gr.SelectData): The selection state from a Gradio gallery, 
+                                        containing information about the selected image.
+
+    Returns:
+        tuple: A tuple containing:
+               - str: The file path of the selected image.
+               - str: The caption of the selected image.
+               If `selected_state` is None or invalid, it returns `None`.
+    """
+    if not selected_state:
+        return selected_state
+
+    return (selected_state.value["image"]["path"], selected_state.value["caption"])
+
+def limit_gallery(gallery):
+    """
+    Ensures the gallery does not exceed input_images_limit.
+    
+    Args:
+        gallery (list): Current gallery images.
+
+    Returns:
+        list: Trimmed gallery with a maximum of input_images_limit images.
+    """
+    return gallery[:input_images_limit] if input_images_limit > 0 and gallery else gallery
+
+def append_gallery(gallery: list, image: str):
+    """
+    Append a single image to the gallery while respecting input_images_limit.
+
+    Parameters:
+    - gallery (list): Existing list of images. If None, initializes an empty list.
+    - image (str): The image to be added. If None or empty, no action is taken.
+
+    Returns:
+    - list: Updated gallery.
+    """
+    if gallery is None:
+        gallery = []
+    if not image:
+        return gallery, None
+    
+    if input_images_limit == -1 or len(gallery) < input_images_limit:
+        gallery.append(image)
+
+    return gallery, None
+
+
+def extend_gallery(gallery: list, images):
+    """
+    Extend the gallery with new images while respecting the input_images_limit.
+    
+    Parameters:
+    - gallery (list): Existing list of images. If None, initializes an empty list.
+    - images (list): New images to be added. If None, defaults to an empty list.
+    
+    Returns:
+    - list: Updated gallery with the new images added.
+    """
+    if gallery is None:
+        gallery = []
+    if not images:
+        return gallery
+    
+    # Add new images to the gallery
+    gallery.extend(images)
+
+    # Trim gallery to the specified limit, if applicable
+    if input_images_limit > 0:
+        gallery = gallery[:input_images_limit]
+
+    return gallery
+
+def remove_image_from_gallery(gallery: list, selected_image: str):
+    """
+    Removes a selected image from the gallery if it exists.
+
+    Args:
+        gallery (list): The current list of images in the gallery.
+        selected_image (str): The image to be removed, represented as a string 
+                              that needs to be parsed into a tuple.
+
+    Returns:
+        list: The updated gallery after removing the selected image.
+    """
+    if not gallery or not selected_image:
+        return gallery
+
+    selected_image = ast.literal_eval(selected_image) # Use ast.literal_eval to parse text into a tuple in remove_image_from_gallery.
+    # Remove the selected image from the gallery
+    if selected_image in gallery:
+        gallery.remove(selected_image)
+    return gallery
 
 def main():
     if torch.cuda.is_available():
@@ -981,20 +1125,38 @@ def main():
     with gr.Blocks(title = title, css = css) as demo:
         gr.Markdown(value=f"<h1 style=\"text-align:center;\">{title}</h1><br>{description}")
         with gr.Row():
-            with gr.Column(variant         ="panel"):
-                input_image                = gr.Image(type="filepath", label="Input", format="png")
+            with gr.Column(variant="panel"):
+                submit = gr.Button(value="Submit", variant="primary", size="lg")
+                # Create an Image component for uploading images
+                input_image                = gr.Image(label="Upload an Image or clicking paste from clipboard button", type="filepath", format="png", height=150)
+                with gr.Row():
+                    upload_button          = gr.UploadButton("Upload multiple images", file_types=["image"], file_count="multiple", size="sm")
+                    remove_button          = gr.Button("Remove Selected Image", size="sm")
+                input_gallery              = gr.Gallery(columns=5, rows=5, show_share_button=False, interactive=True, height="500px", label="Gallery that displaying a grid of images" + (f"(The online environment image limit is {input_images_limit})" if input_images_limit > 0 else ""))
                 face_model                 = gr.Dropdown([None]+list(face_models.keys()), type="value", value='GFPGANv1.4.pth', label='Face Restoration version', info="Face Restoration and RealESR can be freely combined in different ways, or one can be set to \"None\" to use only the other model. Face Restoration is primarily used for face restoration in real-life images, while RealESR serves as a background restoration model.")
                 upscale_model              = gr.Dropdown([None]+list(typed_upscale_models.keys()), type="value", value='SRVGG, realesr-general-x4v3.pth', label='UpScale version')
                 upscale_scale              = gr.Number(label="Rescaling factor", value=4)
                 face_detection             = gr.Dropdown(["retinaface_resnet50", "YOLOv5l", "YOLOv5n"], type="value", value="retinaface_resnet50", label="Face Detection type")
                 face_detection_threshold   = gr.Number(label="Face eye dist threshold", value=10, info="A threshold to filter out faces with too small an eye distance (e.g., side faces).")
                 face_detection_only_center = gr.Checkbox(value=False, label="Face detection only center", info="If set to True, only the face closest to the center of the image will be kept.")
-                with_model_name  = gr.Checkbox(label="Output image files name with model name", value=True)
+                with_model_name            = gr.Checkbox(label="Output image files name with model name", value=True)
+
+                # Define the event listener to add the uploaded image to the gallery
+                input_image.change(append_gallery, inputs=[input_gallery, input_image], outputs=[input_gallery, input_image])
+                # When the upload button is clicked, add the new images to the gallery
+                upload_button.upload(extend_gallery, inputs=[input_gallery, upload_button], outputs=input_gallery)
+                # Event to update the selected image when an image is clicked in the gallery
+                selected_image = gr.Textbox(label="Selected Image", visible=False)
+                input_gallery.select(get_selection_from_gallery, inputs=None, outputs=selected_image)
+                # Trigger update when gallery changes
+                input_gallery.change(limit_gallery, input_gallery, input_gallery)
+                # Event to remove a selected image from the gallery
+                remove_button.click(remove_image_from_gallery, inputs=[input_gallery, selected_image], outputs=input_gallery)
+
                 with gr.Row():
-                    submit = gr.Button(value="Submit", variant="primary", size="lg")
                     clear = gr.ClearButton(
                         components=[
-                            input_image,
+                            input_gallery,
                             face_model,
                             upscale_model,
                             upscale_scale,
@@ -1029,7 +1191,7 @@ def main():
         submit.click(
             upscale.inference, 
             inputs=[
-                input_image,
+                input_gallery,
                 face_model,
                 upscale_model,
                 upscale_scale,
@@ -1046,4 +1208,8 @@ def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_images_limit", type=int, default=5)
+    args = parser.parse_args()
+    input_images_limit = args.input_images_limit
     main()

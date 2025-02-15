@@ -1,6 +1,7 @@
 @echo off
 
 :: The source of the webui.bat file is stable-diffusion-webui
+set COMMANDLINE_ARGS=--input_images_limit -1
 
 if not defined PYTHON (set PYTHON=python)
 if not defined VENV_DIR (set "VENV_DIR=%~dp0%venv")

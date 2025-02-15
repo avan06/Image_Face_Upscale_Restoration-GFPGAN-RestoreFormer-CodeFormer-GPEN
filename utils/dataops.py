@@ -53,14 +53,10 @@ def auto_split_upscale(
             # Check to see if its actually the CUDA out of memory error
             if "CUDA" in str(e):
                 print("RuntimeError: CUDA out of memory...")
-                # Collect garbage (clear VRAM)
-                torch.cuda.empty_cache()
-                gc.collect()
             # Re-raise the exception if not an OOM error
             else:
                 raise RuntimeError(e)
-        finally:
-            # Free GPU memory and clean up resources
+            # Collect garbage (clear VRAM)
             torch.cuda.empty_cache()
             gc.collect()
 
