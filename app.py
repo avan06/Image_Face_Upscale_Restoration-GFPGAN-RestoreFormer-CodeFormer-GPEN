@@ -745,14 +745,14 @@ class Upscale:
             self.realesrganer = upscaler
 
 
-    def initFaceEnhancerModel(self, face_restoration, face_detection, face_detection_threshold: any, face_detection_only_center: bool):
-        download_from_url(face_models[face_restoration][0], face_restoration, os.path.join("weights", "face"))
-        
-        resolution = 512
-        self.modelInUse = f"_{os.path.splitext(face_restoration)[0]}" + self.modelInUse
-        from gfpgan.utils import GFPGANer
+    def initFaceEnhancerModel(self, face_restoration, face_detection):
         model_rootpath = os.path.join("weights", "face")
         model_path = os.path.join(model_rootpath, face_restoration)
+        download_from_url(face_models[face_restoration][0], face_restoration, model_rootpath)
+        
+        self.modelInUse = f"_{os.path.splitext(face_restoration)[0]}" + self.modelInUse
+        from gfpgan.utils import GFPGANer
+        resolution = 512
         channel_multiplier = None
         
         if face_restoration and face_restoration.startswith("GFPGANv1."):
@@ -775,24 +775,34 @@ class Upscale:
         self.face_enhancer = GFPGANer(model_path=model_path, upscale=self.scale, arch=arch, channel_multiplier=channel_multiplier, model_rootpath=model_rootpath, det_model=face_detection, resolution=resolution)
 
 
-    def inference(self, gallery, face_restoration, upscale_model, scale: float, face_detection, face_detection_threshold: any, face_detection_only_center: bool, outputWithModelName: bool):
+    def inference(self, gallery, face_restoration, upscale_model, scale: float, face_detection, face_detection_threshold: any, face_detection_only_center: bool, outputWithModelName: bool, progress=gr.Progress()):
         try:
             if not gallery or (not face_restoration and not upscale_model):
                 raise ValueError("Invalid parameter setting")
             
-            print(face_restoration, upscale_model, scale, f"gallery length: {len(gallery)}")
+            gallery_len = len(gallery)
+            print(face_restoration, upscale_model, scale, f"gallery length: {gallery_len}")
 
             timer = Timer()  # Create a timer
             self.scale = scale
-
+            
+            progressTotal = gallery_len + 1
+            progressRatio = 0.5 if upscale_model and face_restoration else 1
+            print(f"progressRatio: {progressRatio}")
+            current_progress = 0
+            progress(0, desc="Initialize model start")
             if upscale_model:
                 self.initBGUpscaleModel(upscale_model)
-                timer.checkpoint("Initialize BG upscale model")
+                current_progress += progressRatio/progressTotal;
+                progress(current_progress, desc="Initialize BG upscale model finished")
+                timer.checkpoint(f"Initialize BG upscale model")
 
             if face_restoration:
-                self.initFaceEnhancerModel(face_restoration, face_detection, face_detection_threshold, face_detection_only_center)
-                timer.checkpoint("Initialize face enhancer model")
-
+                self.initFaceEnhancerModel(face_restoration, face_detection)
+                current_progress += progressRatio/progressTotal;
+                progress(current_progress, desc="Initialize face enhancer model finished")
+                timer.checkpoint(f"Initialize face enhancer model")
+                
             timer.report()
 
             if not outputWithModelName:
@@ -822,6 +832,8 @@ class Upscale:
                     bg_upsample_img = None
                     if self.realesrganer and hasattr(self.realesrganer, "enhance"):
                         bg_upsample_img, _ = auto_split_upscale(img_cv2, self.realesrganer.enhance, self.scale) if is_auto_split_upscale else self.realesrganer.enhance(img_cv2, outscale=self.scale)
+                        current_progress += progressRatio/progressTotal;
+                        progress(current_progress, desc=f"image{gallery_idx:02d}, Background upscale Section")
                         timer.checkpoint(f"image{gallery_idx:02d}, Background upscale Section")
                     
                     if self.face_enhancer:
@@ -843,6 +855,8 @@ class Upscale:
                                 files.append(save_crop_path)
                                 files.append(save_restore_path)
                                 files.append(save_cmp_path)
+                        current_progress += progressRatio/progressTotal;
+                        progress(current_progress, desc=f"image{gallery_idx:02d}, Face enhancer Section")
                         timer.checkpoint(f"image{gallery_idx:02d}, Face enhancer Section")
                     
                     restored_img = bg_upsample_img
@@ -859,6 +873,7 @@ class Upscale:
                     print(traceback.format_exc())
                     print('Error', error)
                     
+            progress(1, desc=f"Execution completed")
             timer.report_all()  # Print all recorded times
         except Exception as error:
             print(traceback.format_exc())
@@ -1099,6 +1114,10 @@ def main():
     ul.options {
         max-height: 500px !important;  /* Set the maximum height of the dropdown menu */
         overflow-y: auto !important;   /* Enable vertical scrolling if the content exceeds the height */
+    }
+    div.progress-level div.progress-level-inner {
+        text-align: left !important;
+        width: 55.5% !important;
     }
     """
 
