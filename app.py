@@ -816,11 +816,11 @@ class Upscale:
                 try:
                     img_path = str(value[0])
                     img_name = os.path.basename(img_path)
+                    basename, extension = os.path.splitext(img_name)
                     # Increment the counter for the current name
                     name_counters[img_name] += 1
                     if name_counters[img_name] > 1:
-                        img_name = f"{img_name}_{name_counters[img_name]:02d}"
-                    basename, extension = os.path.splitext(img_name)
+                        basename = f"{basename}_{name_counters[img_name]:02d}"
                     
                     img_cv2 = cv2.imdecode(np.fromfile(img_path, np.uint8), cv2.IMREAD_UNCHANGED) # numpy.ndarray
             
