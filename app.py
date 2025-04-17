@@ -10,6 +10,7 @@ import math
 import time
 import ast
 import argparse
+import zipfile
 from collections import defaultdict
 from facexlib.utils.misc import download_from_url
 from basicsr.utils.realesrganer import RealESRGANer
@@ -809,6 +810,17 @@ class Upscale:
                 self.modelInUse = ""
                 
             files = []
+            # Create zip files for each output type
+            unique_id = str(int(time.time())) # Use timestamp for uniqueness
+            zip_cropf_path    = f"output/{unique_id}_cropped_faces{self.modelInUse}.zip"
+            zipf_cropf         = zipfile.ZipFile(zip_cropf_path, 'w', zipfile.ZIP_DEFLATED)
+            zip_restoref_path = f"output/{unique_id}_restored_faces{self.modelInUse}.zip"
+            zipf_restoref     = zipfile.ZipFile(zip_restoref_path, 'w', zipfile.ZIP_DEFLATED)
+            zip_cmp_path      = f"output/{unique_id}_cmp{self.modelInUse}.zip"
+            zipf_cmp          = zipfile.ZipFile(zip_cmp_path, 'w', zipfile.ZIP_DEFLATED)
+            zip_restore_path  = f"output/{unique_id}_restored_images{self.modelInUse}.zip"
+            zipf_restore      = zipfile.ZipFile(zip_restore_path, 'w', zipfile.ZIP_DEFLATED)
+
             is_auto_split_upscale = True
             # Dictionary to track counters for each filename
             name_counters = defaultdict(int)
@@ -820,10 +832,10 @@ class Upscale:
                     # Increment the counter for the current name
                     name_counters[img_name] += 1
                     if name_counters[img_name] > 1:
-                        basename = f"{basename}_{name_counters[img_name]:02d}"
-                    
+                        basename = f"{basename}_{name_counters[img_name] - 1:02d}"
+
                     img_cv2 = cv2.imdecode(np.fromfile(img_path, np.uint8), cv2.IMREAD_UNCHANGED) # numpy.ndarray
-            
+
                     img_mode = "RGBA" if len(img_cv2.shape) == 3 and img_cv2.shape[2] == 4 else None
                     if len(img_cv2.shape) == 2:  # for gray inputs
                         img_cv2 = cv2.cvtColor(img_cv2, cv2.COLOR_GRAY2BGR)
@@ -835,30 +847,33 @@ class Upscale:
                         current_progress += progressRatio/progressTotal;
                         progress(current_progress, desc=f"image{gallery_idx:02d}, Background upscale Section")
                         timer.checkpoint(f"image{gallery_idx:02d}, Background upscale Section")
-                    
+
                     if self.face_enhancer:
                         cropped_faces, restored_aligned, bg_upsample_img = self.face_enhancer.enhance(img_cv2, has_aligned=False, only_center_face=face_detection_only_center, paste_back=True, bg_upsample_img=bg_upsample_img, eye_dist_threshold=face_detection_threshold)
                         # save faces
                         if cropped_faces and restored_aligned:
                             for idx, (cropped_face, restored_face) in enumerate(zip(cropped_faces, restored_aligned)):
                                 # save cropped face
-                                save_crop_path = f"output/{basename}{idx:02d}_cropped_faces{self.modelInUse}.png"
+                                save_crop_path = f"output/{basename}_{idx:02d}_cropped_faces{self.modelInUse}.png"
                                 self.imwriteUTF8(save_crop_path, cropped_face)
+                                zipf_cropf.write(save_crop_path, arcname=os.path.basename(save_crop_path))
                                 # save restored face
-                                save_restore_path = f"output/{basename}{idx:02d}_restored_faces{self.modelInUse}.png"
+                                save_restore_path = f"output/{basename}_{idx:02d}_restored_faces{self.modelInUse}.png"
                                 self.imwriteUTF8(save_restore_path, restored_face)
+                                zipf_restoref.write(save_restore_path, arcname=os.path.basename(save_restore_path))
                                 # save comparison image
-                                save_cmp_path = f"output/{basename}{idx:02d}_cmp{self.modelInUse}.png"
+                                save_cmp_path = f"output/{basename}_{idx:02d}_cmp{self.modelInUse}.png"
                                 cmp_img = np.concatenate((cropped_face, restored_face), axis=1)
                                 self.imwriteUTF8(save_cmp_path, cmp_img)
-                    
+                                zipf_cmp.write(save_cmp_path, arcname=os.path.basename(save_cmp_path))
+
                                 files.append(save_crop_path)
                                 files.append(save_restore_path)
                                 files.append(save_cmp_path)
                         current_progress += progressRatio/progressTotal;
                         progress(current_progress, desc=f"image{gallery_idx:02d}, Face enhancer Section")
                         timer.checkpoint(f"image{gallery_idx:02d}, Face enhancer Section")
-                    
+
                     restored_img = bg_upsample_img
                     timer.report()
 
@@ -866,15 +881,21 @@ class Upscale:
                         extension = ".png" if img_mode == "RGBA" else ".jpg" # RGBA images should be saved in png format
                     save_path = f"output/{basename}{self.modelInUse}{extension}"
                     self.imwriteUTF8(save_path, restored_img)
+                    zipf_restore.write(save_path, arcname=os.path.basename(save_path))
 
                     restored_img = cv2.cvtColor(restored_img, cv2.COLOR_BGR2RGB)
                     files.append(save_path)
                 except RuntimeError as error:
                     print(traceback.format_exc())
                     print('Error', error)
-                    
+
             progress(1, desc=f"Execution completed")
             timer.report_all()  # Print all recorded times
+            # Close zip files
+            zipf_cropf.close()
+            zipf_restoref.close()
+            zipf_cmp.close()
+            zipf_restore.close()
         except Exception as error:
             print(traceback.format_exc())
             print("global exception: ", error)
@@ -886,8 +907,8 @@ class Upscale:
                 # Free GPU memory and clean up resources
                 torch.cuda.empty_cache()
                 gc.collect()
-
-        return files, files
+                
+        return files, [zip_cropf_path, zip_restoref_path, zip_cmp_path, zip_restore_path]
 
 
     def find_max_numbers(self, state_dict, findkeys):
@@ -898,7 +919,7 @@ class Upscale:
     
         for key in state_dict:
             for findkey, pattern in patterns.items():
-                if match := pattern.match(key):  
+                if match := pattern.match(key):
                     num = int(match.group(1))
                     max_values[findkey] = max(num, max_values[findkey] if max_values[findkey] is not None else num)
 
@@ -1186,7 +1207,7 @@ def main():
                         ], variant="secondary", size="lg",)
             with gr.Column(variant="panel"):
                 gallerys = gr.Gallery(type="filepath", label="Output (The whole image)", format="png")
-                outputs = gr.File(label="Download the output image")
+                outputs = gr.File(label="Download the output ZIP file")
         with gr.Row(variant="panel"):
             # Generate output array
             output_arr = []
