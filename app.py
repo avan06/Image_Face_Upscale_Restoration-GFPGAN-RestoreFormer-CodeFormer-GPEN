@@ -219,6 +219,20 @@ Phhofm: Restoration, 4x ESRGAN model for photography, trained using the Real-ESR
 Phhofm: Restoration, 4x ESRGAN model for photography, trained with realistic noise, lens blur, jpg and webp re-compression.
 ESRGAN version of 4xNomosWebPhoto_RealPLKSR, trained on the same dataset and in the same way."""],
 
+
+    "4x_foolhardy_Remacri.pth": ["https://civitai.com/api/download/models/164821?type=Model&format=PickleTensor",
+                               "https://openmodeldb.info/models/4x-Remacri", 
+"""Original
+FoolhardyVEVO: A creation of BSRGAN with more details and less smoothing, made by interpolating IRL models such as Siax, 
+Superscale, Superscale Artisoft, Pixel Perfect, etc. This was, things like skin and other details don't become mushy and blurry."""],
+
+    "4x_foolhardy_Remacri_ExtraSmoother.pth": ["https://civitai.com/api/download/models/164822?type=Model&format=PickleTensor",
+                               "https://openmodeldb.info/models/4x-Remacri", 
+"""ExtraSmoother
+FoolhardyVEVO: A creation of BSRGAN with more details and less smoothing, made by interpolating IRL models such as Siax, 
+Superscale, Superscale Artisoft, Pixel Perfect, etc. This was, things like skin and other details don't become mushy and blurry."""],
+
+
     # DATNet
     "4xNomos8kDAT.pth"                     : ["https://github.com/Phhofm/models/releases/download/4xNomos8kDAT/4xNomos8kDAT.pth",
                                              "https://openmodeldb.info/models/4x-Nomos8kDAT", 
@@ -431,7 +445,7 @@ example_list = ["images/a01.jpg", "images/a02.jpg", "images/a03.jpg", "images/a0
 def get_model_type(model_name):
     # Define model type mappings based on key parts of the model names
     model_type = "other"
-    if any(value in model_name.lower() for value in ("4x-animesharp.pth", "sudo-realesrgan")):
+    if any(value in model_name.lower() for value in ("4x-animesharp.pth", "sudo-realesrgan", "remacri")):
         model_type = "ESRGAN"
     elif "srformer" in model_name.lower():
         model_type = "SRFormer"
@@ -726,7 +740,7 @@ class Upscale:
                     return new_image
 
                 def enhance(self, img, outscale=None):
-                    # img: numpy
+                    # img: numpy array
                     h_input, w_input = img.shape[0:2]
                     pil_img = self.cv2pil(img)
                     pil_img = self.__call__(pil_img)
@@ -791,17 +805,17 @@ class Upscale:
             progressRatio = 0.5 if upscale_model and face_restoration else 1
             print(f"progressRatio: {progressRatio}")
             current_progress = 0
-            progress(0, desc="Initialize model start")
+            progress(0, desc="Initializing models...")
             if upscale_model:
                 self.initBGUpscaleModel(upscale_model)
                 current_progress += progressRatio/progressTotal;
-                progress(current_progress, desc="Initialize BG upscale model finished")
+                progress(current_progress, desc="BG upscale model initialized.")
                 timer.checkpoint(f"Initialize BG upscale model")
 
             if face_restoration:
                 self.initFaceEnhancerModel(face_restoration, face_detection)
                 current_progress += progressRatio/progressTotal;
-                progress(current_progress, desc="Initialize face enhancer model finished")
+                progress(current_progress, desc="Face enhancer model initialized.")
                 timer.checkpoint(f"Initialize face enhancer model")
                 
             timer.report()
@@ -825,30 +839,39 @@ class Upscale:
             # Dictionary to track counters for each filename
             name_counters = defaultdict(int)
             for gallery_idx, value in enumerate(gallery):
+                img_path = None
                 try:
-                    img_path = str(value[0])
+                    if value is None or not value:
+                        print(f"Warning: Invalid gallery item at index {gallery_idx}. Skipping.")
+                        continue
+                    img_path = str(value[0]) # value is often a list/tuple like [filepath, caption]
                     img_name = os.path.basename(img_path)
                     basename, extension = os.path.splitext(img_name)
-                    # Increment the counter for the current name
+                    # Increment the counter for the current name if it appears multiple times
                     name_counters[img_name] += 1
                     if name_counters[img_name] > 1:
                         basename = f"{basename}_{name_counters[img_name] - 1:02d}"
 
                     img_cv2 = cv2.imdecode(np.fromfile(img_path, np.uint8), cv2.IMREAD_UNCHANGED) # numpy.ndarray
 
+                    if img_cv2 is None:
+                        print(f"Warning: Could not read or decode image '{img_path}'. Skipping this image.")
+                        # Skip this iteration and process the next image
+                        continue
+
                     img_mode = "RGBA" if len(img_cv2.shape) == 3 and img_cv2.shape[2] == 4 else None
                     if len(img_cv2.shape) == 2:  # for gray inputs
                         img_cv2 = cv2.cvtColor(img_cv2, cv2.COLOR_GRAY2BGR)
-                    print(f"> image{gallery_idx:02d}, {img_cv2.shape}:")
+                    print(f"> Processing image {gallery_idx:02d}, Shape: {img_cv2.shape}")
 
                     bg_upsample_img = None
-                    if self.realesrganer and hasattr(self.realesrganer, "enhance"):
+                    if upscale_model and self.realesrganer and hasattr(self.realesrganer, "enhance"):
                         bg_upsample_img, _ = auto_split_upscale(img_cv2, self.realesrganer.enhance, self.scale) if is_auto_split_upscale else self.realesrganer.enhance(img_cv2, outscale=self.scale)
                         current_progress += progressRatio/progressTotal;
-                        progress(current_progress, desc=f"image{gallery_idx:02d}, Background upscale Section")
-                        timer.checkpoint(f"image{gallery_idx:02d}, Background upscale Section")
+                        progress(current_progress, desc=f"Image {gallery_idx:02d}: Background upscaling...")
+                        timer.checkpoint(f"Image {gallery_idx:02d}: Background upscale section")
 
-                    if self.face_enhancer:
+                    if face_restoration and self.face_enhancer:
                         cropped_faces, restored_aligned, bg_upsample_img = self.face_enhancer.enhance(img_cv2, has_aligned=False, only_center_face=face_detection_only_center, paste_back=True, bg_upsample_img=bg_upsample_img, eye_dist_threshold=face_detection_threshold)
                         # save faces
                         if cropped_faces and restored_aligned:
@@ -871,11 +894,16 @@ class Upscale:
                                 files.append(save_restore_path)
                                 files.append(save_cmp_path)
                         current_progress += progressRatio/progressTotal;
-                        progress(current_progress, desc=f"image{gallery_idx:02d}, Face enhancer Section")
-                        timer.checkpoint(f"image{gallery_idx:02d}, Face enhancer Section")
+                        progress(current_progress, desc=f"Image {gallery_idx:02d}: Face enhancement...")
+                        timer.checkpoint(f"Image {gallery_idx:02d}: Face enhancer section")
 
                     restored_img = bg_upsample_img
-                    timer.report()
+                    timer.report() # Report time for this image
+
+                    # Handle cases where image processing might still result in None
+                    if restored_img is None:
+                       print(f"Warning: Processing resulted in no image for '{img_path}'. Skipping output.")
+                       continue
 
                     if not extension:
                         extension = ".png" if img_mode == "RGBA" else ".jpg" # RGBA images should be saved in png format
@@ -886,29 +914,34 @@ class Upscale:
                     restored_img = cv2.cvtColor(restored_img, cv2.COLOR_BGR2RGB)
                     files.append(save_path)
                 except RuntimeError as error:
+                    print(f"Runtime Error while processing image {gallery_idx} ({img_path or 'unknown path'}): {error}")
                     print(traceback.format_exc())
-                    print('Error', error)
+                except Exception as general_error:
+                    print(f"An unexpected error occurred while processing image {gallery_idx} ({img_path or 'unknown path'}): {general_error}")
+                    print(traceback.format_exc())
+                    # Can still choose to continue to process the next image
+                    continue
 
-            progress(1, desc=f"Execution completed")
-            timer.report_all()  # Print all recorded times
+            progress(1, desc=f"Processing complete.")
+            timer.report_all()  # Print all recorded times for the whole batch
             # Close zip files
             zipf_cropf.close()
             zipf_restoref.close()
             zipf_cmp.close()
             zipf_restore.close()
         except Exception as error:
+            print(f"Global exception occurred: {error}")
             print(traceback.format_exc())
-            print("global exception: ", error)
             return None, None
         finally:
-            if self.face_enhancer:
+            if hasattr(self, 'face_enhancer') and self.face_enhancer:
                 self.face_enhancer._cleanup()
-            else:
-                # Free GPU memory and clean up resources
+            # Free GPU memory and clean up resources
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                gc.collect()
+            gc.collect()
                 
-        return files, [zip_cropf_path, zip_restoref_path, zip_cmp_path, zip_restore_path]
+        return files, [zip_cropf_path, zip_restoref_path, zip_cmp_path, zip_restore_path]  if face_restoration else [zip_restore_path]
 
 
     def find_max_numbers(self, state_dict, findkeys):
