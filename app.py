@@ -790,7 +790,7 @@ class Upscale:
         self.face_enhancer = GFPGANer(model_path=model_path, upscale=self.scale, arch=arch, channel_multiplier=channel_multiplier, model_rootpath=model_rootpath, det_model=face_detection, resolution=resolution)
 
 
-    def inference(self, gallery, face_restoration, upscale_model, scale: float, face_detection, face_detection_threshold: any, face_detection_only_center: bool, outputWithModelName: bool, progress=gr.Progress()):
+    def inference(self, gallery, face_restoration, upscale_model, scale: float, face_detection, face_detection_threshold: any, face_detection_only_center: bool, outputWithModelName: bool, save_as_png: bool, progress=gr.Progress()):
         try:
             if not gallery or (not face_restoration and not upscale_model):
                 raise ValueError("Invalid parameter setting")
@@ -905,9 +905,14 @@ class Upscale:
                        print(f"Warning: Processing resulted in no image for '{img_path}'. Skipping output.")
                        continue
 
-                    if not extension:
-                        extension = ".png" if img_mode == "RGBA" else ".jpg" # RGBA images should be saved in png format
-                    save_path = f"output/{basename}{self.modelInUse}{extension}"
+                    # Determine the file extension for the output image based on user preference and image properties.
+                    if save_as_png:
+                        # Force PNG output for the best quality, as requested by the user.
+                        final_extension = ".png"
+                    else:
+                        # Use original logic: PNG for images with an alpha channel (RGBA), otherwise use the original extension or default to jpg.
+                        final_extension = ".png" if img_mode == "RGBA" else (extension if extension else ".jpg")
+                    save_path = f"output/{basename}{self.modelInUse}{final_extension}"
                     self.imwriteUTF8(save_path, restored_img)
                     zipf_restore.write(save_path, arcname=os.path.basename(save_path))
 
@@ -1145,7 +1150,11 @@ def remove_image_from_gallery(gallery: list, selected_image: str):
 
 def main():
     if torch.cuda.is_available():
-        torch.cuda.set_per_process_memory_fraction(0.975, device='cuda:0')
+        # Sets the VRAM limit for the GPU. Fine-tune VRAM usage.
+        # Higher values allow larger image tiles to be processed at once, which is faster. If you see the 'depth' in the console log increase frequently, try raising this value.
+        # Lower it for complex models that need more memory overhead.
+        # This setting is locked in once processing starts. To apply a new value, you must restart the entire application.
+        torch.cuda.set_per_process_memory_fraction(0.900, device='cuda:0')
         # set torch options to avoid get black image for RTX16xx card
         # https://github.com/CompVis/stable-diffusion/issues/69#issuecomment-1260722801
         torch.backends.cudnn.enabled = True
@@ -1213,6 +1222,8 @@ def main():
                 face_detection_threshold   = gr.Number(label="Face eye dist threshold", value=10, info="A threshold to filter out faces with too small an eye distance (e.g., side faces).")
                 face_detection_only_center = gr.Checkbox(value=False, label="Face detection only center", info="If set to True, only the face closest to the center of the image will be kept.")
                 with_model_name            = gr.Checkbox(label="Output image files name with model name", value=True)
+                # Add a checkbox to always save the output as a PNG file for the best quality.
+                save_as_png                = gr.Checkbox(label="Always save output as PNG", value=True, info="If enabled, all output images will be saved in PNG format to ensure the best quality. If disabled, the format will be determined automatically (PNG for images with transparency, otherwise JPG).")
 
                 # Define the event listener to add the uploaded image to the gallery
                 input_image.change(append_gallery, inputs=[input_gallery, input_image], outputs=[input_gallery, input_image])
@@ -1237,6 +1248,7 @@ def main():
                             face_detection_threshold,
                             face_detection_only_center,
                             with_model_name,
+                            save_as_png,
                         ], variant="secondary", size="lg",)
             with gr.Column(variant="panel"):
                 gallerys = gr.Gallery(type="filepath", label="Output (The whole image)", format="png")
@@ -1272,6 +1284,7 @@ def main():
                 face_detection_threshold,
                 face_detection_only_center,
                 with_model_name,
+                save_as_png,
             ],
             outputs=[gallerys, outputs],
         )
